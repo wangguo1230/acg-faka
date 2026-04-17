@@ -1,0 +1,20 @@
+services:
+  app:
+    container_name: acg-faka-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./runtime:/var/www/html/runtime
+      - ./assets/cache:/var/www/html/assets/cache
+      - ./app/Plugin:/var/www/html/app/Plugin
+      - ./app/Pay:/var/www/html/app/Pay
+      - ./app/View/User/Theme:/var/www/html/app/View/User/Theme
+      - ./config/database.php:/var/www/html/config/database.php
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
