@@ -1,7 +1,9 @@
 .git
+.github
 .serena
 .idea
 .vscode
+.spec-workflow
 
 Dockerfile
 docker-compose*.yml

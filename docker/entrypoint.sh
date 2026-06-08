@@ -36,6 +36,43 @@ if [ ! -L favicon.ico ]; then
     ln -s assets/cache/favicon.ico favicon.ico
 fi
 
+# 根据环境变量渲染 PHP Session(Redis) 配置，支持对接外部 Redis（如 1Panel）。
+# 默认值与本地 docker-compose 中的内置 redis 服务保持一致。
+REDIS_HOST="${REDIS_HOST:-redis}"
+REDIS_PORT="${REDIS_PORT:-6379}"
+REDIS_DATABASE="${REDIS_DATABASE:-1}"
+REDIS_SESSION_PREFIX="${REDIS_SESSION_PREFIX:-acg_sess:}"
+
+SESSION_QUERY="database=${REDIS_DATABASE}&prefix=${REDIS_SESSION_PREFIX}"
+if [ -n "${REDIS_PASSWORD:-}" ]; then
+    SESSION_QUERY="auth=${REDIS_PASSWORD}&${SESSION_QUERY}"
+fi
+
+cat > /usr/local/etc/php/conf.d/zz-acg-session.ini <<EOF
+session.save_handler = redis
+session.save_path = "tcp://${REDIS_HOST}:${REDIS_PORT}?${SESSION_QUERY}"
+EOF
+
+# 当提供数据库环境变量、且 config/database.php 仍是发行版自带的 demo 占位配置时，
+# 用环境变量预置数据库连接，方便对接外部 MySQL（如 1Panel）。真实安装后的配置不会被覆盖。
+if [ -n "${DB_HOST:-}" ] && { [ ! -f config/database.php ] || grep -q "'database' => 'demo'" config/database.php; }; then
+    cat > config/database.php <<EOF
+<?php
+declare (strict_types=1);
+
+return [
+    'driver' => 'mysql',
+    'host' => '${DB_HOST}',
+    'database' => '${DB_DATABASE:-acg-faka}',
+    'username' => '${DB_USERNAME:-acg-faka}',
+    'password' => '${DB_PASSWORD:-}',
+    'charset' => 'utf8mb4',
+    'collation' => 'utf8mb4_unicode_ci',
+    'prefix' => '${DB_PREFIX:-acg_}',
+];
+EOF
+fi
+
 chown -R www-data:www-data \
     assets/cache \
     app/Pay \
