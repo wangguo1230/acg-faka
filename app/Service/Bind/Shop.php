@@ -148,7 +148,7 @@ class Shop implements \App\Service\Shop
                 "status", "owner", "delivery_way", "contact_type", "password_status", "level_price",
                 "level_disable", "coupon", "shared_id", "shared_code", "shared_premium", "shared_premium_type", "seckill_status",
                 "seckill_start_time", "seckill_end_time", "draft_status", "draft_premium", "inventory_hidden",
-                "widget", "minimum", "maximum", "shared_sync", "config", "stock", "code"])
+                "widget", "minimum", "maximum", "shared_sync", "config", "stock", "code", "shared_amount_sync", "shared_config_sync"])
             ->withCount(['order as order_sold' => function (Builder $relation) {
                 $relation->where("delivery_status", 1);
             }]);
@@ -184,9 +184,26 @@ class Shop implements \App\Service\Shop
 
                 $base = $this->shared->AdjustmentPrice(Ini::toConfig($remoteItem['config'] ?: []), (string)$remoteItem['price'], (string)$remoteItem['user_price'], $new->shared_premium_type, $new->shared_premium);
 
-                $commodity->price = $new->price = $base['price'];
-                $commodity->user_price = $new->user_price = $base['user_price'];
-                $commodity->config = $new->config = Ini::toConfig($base['config']);
+                $_config = $remoteItem['config'] ?: [];
+
+                if (!empty($_config['sku'])) {
+                    $base['config']['sku_cost'] = $_config['sku'];
+                }
+
+                if (!empty($_config['category'])) {
+                    $base['config']['category_cost'] = $_config['category'];
+                }
+
+                if ($commodity->shared_amount_sync === 1) {
+                    $commodity->price = $new->price = $base['price'];
+                    $commodity->user_price = $new->user_price = $base['user_price'];
+                }
+
+
+                if ($commodity->shared_config_sync === 1) {
+                    $commodity->config = $new->config = Ini::toConfig($base['config']);
+                }
+
                 $commodity->draft_status = $new->draft_status = $remoteItem['draft_status'];
                 $commodity->draft_premium = $new->draft_premium = $remoteItem['draft_premium'] > 0 ? $this->shared->AdjustmentAmount($new->shared_premium_type, $new->shared_premium, $remoteItem['draft_premium']) : 0;
                 $commodity->seckill_status = $new->seckill_status = $remoteItem['seckill_status'];
@@ -365,7 +382,7 @@ class Shop implements \App\Service\Shop
         $hash = $this->getSharedStockHash($commodity->id, $race, $sku);
 
         if (!is_array($commodity->shared_stock) || !isset($commodity->shared_stock[$hash])) {
-            $stock = $this->shared->getItemStock($commodity->shared, $commodity->shared_code, $race, $sku);
+            $stock = $this->shared->getItemStock((clone $commodity), $commodity->shared, $commodity->shared_code, $race, $sku);
             $array = is_array($commodity->shared_stock) ? $commodity->shared_stock : [];
             $array[$hash] = $stock;
             Commodity::query()->where("id", $commodity->id)->update(["shared_stock" => $array]);
@@ -403,7 +420,7 @@ class Shop implements \App\Service\Shop
             throw new JSONException("此宝贝已被他人抢走");
         }
 
-        return ["draft_premium" => $card->draft_premium];
+        return ["draft_premium" => $card->draft_premium, "cost" => $card->cost];
     }
 
 

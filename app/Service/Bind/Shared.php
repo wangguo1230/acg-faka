@@ -77,7 +77,7 @@ class Shared implements \App\Service\Shared
                 'timeout' => 30
             ]);
         } catch (\Exception $e) {
-            throw new JSONException("连接失败");
+            throw new JSONException("连接失败, 疑似被对方防火墙拦截");
         }
         $contents = $response->getBody()->getContents();
 
@@ -102,6 +102,8 @@ class Shared implements \App\Service\Shared
         if ($type == 1) {
             $data = $this->mcyRequest($domain . "/plugin/open-api/connect", $appId, $appKey);
             return ["shopName" => $data['username'], "balance" => $data['balance']];
+        } elseif ($type == 2) {
+            return $this->post($domain . "/plugin/SharedStock/api/connect", $appId, $appKey);
         }
         return $this->post($domain . "/shared/authentication/connect", $appId, $appKey);
     }
@@ -196,19 +198,8 @@ class Shared implements \App\Service\Shared
 
             return array_values($category);
         } elseif ($shared->type == 2) {
-            $a = $this->post($shared->domain . "/shared/commodity/items", $shared->app_id, $shared->app_key);
-
-            foreach ($a as &$a1) {
-                if (is_array($a1['children'])) {
-                    foreach ($a1['children'] as &$a2) {
-                        $a2['stock'] = '10000000';
-                    }
-                }
-            }
-
-            return $a;
+            return $this->post($shared->domain . "/plugin/SharedStock/api/items", $shared->app_id, $shared->app_key);
         }
-
 
         return $this->post($shared->domain . "/shared/commodity/items", $shared->app_id, $shared->app_key);
     }
@@ -234,9 +225,10 @@ class Shared implements \App\Service\Shared
 
             return $a;
         } elseif ($shared->type == 2) {
-            $a = $this->post($shared->domain . "/shared/commodity/item", $shared->app_id, $shared->app_key, [
-                "sharedCode" => $code
+            $a = $this->post($shared->domain . "/plugin/SharedStock/api/item", $shared->app_id, $shared->app_key, [
+                "code" => $code
             ]);
+
             if (!isset($a[0]['children'][0])) {
                 throw new JSONException("商品不存在#{$code}");
             }
@@ -246,8 +238,6 @@ class Shared implements \App\Service\Shared
             if (!is_array($b['config'])) {
                 $b['config'] = Ini::toArray((string)$b['config']);
             }
-
-            $b['stock'] = '10000000';
 
             return $b;
         }
@@ -430,7 +420,11 @@ class Shared implements \App\Service\Shared
                 $data = $this->mcyRequest($shared->domain . "/plugin/open-api/sku/stock", $shared->app_id, $shared->app_key, [
                     'sku_id' => (int)$config['shared_mapping'][$race],
                 ]);
-                $result['count'] = (int)$data['stock'];
+                if (is_numeric($data['stock'])) {
+                    $result['count'] = (int)$data['stock'];
+                } else {
+                    $result['count'] = 999;
+                }
             }
 
             return $result;
@@ -445,6 +439,7 @@ class Shared implements \App\Service\Shared
     }
 
     /**
+     * @param Commodity $commodity
      * @param \App\Model\Shared $shared
      * @param string $code
      * @param string|null $race
@@ -453,20 +448,69 @@ class Shared implements \App\Service\Shared
      * @throws GuzzleException
      * @throws JSONException
      */
-    public function getItemStock(\App\Model\Shared $shared, string $code, ?string $race = null, ?array $sku = []): string
+    public function getItemStock(Commodity $commodity, \App\Model\Shared $shared, string $code, ?string $race = null, ?array $sku = []): string
     {
         if ($shared->type == 1) {
-            return "10000000";
+            $result = $this->inventory($shared, $commodity, $race);
+            return isset($result['count']) ? (string)$result['count'] : "0";
         } elseif ($shared->type == 2) {
-            return "10000000";
+            $stock = $this->post($shared->domain . "/plugin/SharedStock/api/stock", $shared->app_id, $shared->app_key, [
+                "code" => $code,
+                "race" => $race
+            ]);
+            return $stock['stock'] ?? "0";
         }
-        
+
         $stock = $this->post($shared->domain . "/shared/commodity/stock", $shared->app_id, $shared->app_key, [
             "code" => $code,
             "race" => $race,
             "sku" => $sku
         ]);
         return $stock['stock'] ?? "0";
+    }
+
+    /**
+     * @param Commodity $commodity
+     * @param \App\Model\Shared $shared
+     * @param string $code
+     * @param int $num
+     * @param string|null $race
+     * @param array|null $sku
+     * @param int|null $cardId
+     * @return string|float|int
+     */
+    public function getValuation(Commodity $commodity, \App\Model\Shared $shared, string $code, int $num, ?string $race = null, ?array $sku = [], ?int $cardId = 0): string|float|int
+    {
+        try {
+            $config = is_array($commodity->config) ? $commodity->config : Ini::toArray($commodity->config);
+            if ($shared->type == 1) { //V4
+                $data = $this->mcyRequest($shared->domain . "/plugin/open-api/amount", $shared->app_id, $shared->app_key, [
+                    'sku_id' => (int)$config['shared_mapping'][$race],
+                    "quantity" => $num
+                ]);
+                return $data['amount'] ?? 0;
+            } elseif ($shared->type == 2) {
+                $data = $this->post($shared->domain . "/plugin/SharedStock/api/valuation", $shared->app_id, $shared->app_key, [
+                    'code' => $code,
+                    'num' => $num,
+                    'race' => $race,
+                    'card_id' => $cardId
+                ]);
+                return $data['price'] ?? 0;
+            }
+
+            $data = $this->post($shared->domain . "/shared/commodity/valuation", $shared->app_id, $shared->app_key, [
+                'code' => $code,
+                'num' => $num,
+                'race' => $race,
+                'sku' => $sku,
+                'card_id' => $cardId
+            ]);
+
+            return $data['price'] ?? 0;
+        } catch (\Throwable $e) {
+            return 0;
+        }
     }
 
 
@@ -541,5 +585,66 @@ class Shared implements \App\Service\Shared
     {
         $_tmp = new Decimal($amount, 2);
         return $type == 0 ? $_tmp->add($premium)->getAmount() : $_tmp->add((new Decimal($premium, 3))->mul($amount)->getAmount())->getAmount();
+    }
+
+
+    /**
+     * @param Commodity|int $commodity
+     * @return bool
+     * @throws GuzzleException
+     * @throws JSONException
+     */
+    public function syncRemoteItem(Commodity|int $commodity): bool
+    {
+        if (is_int($commodity)) {
+            $commodity = Commodity::query()->find($commodity);
+        }
+
+        if (!$commodity) {
+            return false;
+        }
+
+        $shared = \App\Model\Shared::query()->find($commodity->shared_id);
+
+        if (!$shared) {
+            return false;
+        }
+
+        $remoteItem = $this->item($shared, $commodity->shared_code);
+        $base = $this->AdjustmentPrice(Ini::toConfig($remoteItem['config'] ?: []), (string)$remoteItem['price'], (string)$remoteItem['user_price'], $commodity->shared_premium_type, $commodity->shared_premium);
+
+
+        $_config = $remoteItem['config'] ?: [];
+
+        if (!empty($_config['sku'])) {
+            $base['config']['sku_cost'] = $_config['sku'];
+        }
+
+        if (!empty($_config['category'])) {
+            $base['config']['category_cost'] = $_config['category'];
+        }
+
+        if ($commodity->shared_amount_sync === 1) {
+            $commodity->price = $base['price'];
+            $commodity->user_price = $base['user_price'];
+        }
+
+        if ($commodity->shared_config_sync === 1) {
+            $commodity->config = Ini::toConfig($base['config']);
+        }
+
+        $commodity->draft_status = $remoteItem['draft_status'];
+        $commodity->draft_premium = $remoteItem['draft_premium'] > 0 ? $this->AdjustmentAmount($commodity->shared_premium_type, $commodity->shared_premium, $remoteItem['draft_premium']) : 0;
+        $commodity->seckill_status = $remoteItem['seckill_status'];
+        $commodity->seckill_start_time = $remoteItem['seckill_start_time'];
+        $commodity->seckill_end_time = $remoteItem['seckill_end_time'];
+        $commodity->widget = is_array($remoteItem['widget']) ? json_encode($remoteItem['widget']) : $remoteItem['widget'];
+        $commodity->minimum = $remoteItem['minimum'];
+        $commodity->maximum = $remoteItem['maximum'];
+        $commodity->stock = $remoteItem['stock'];
+        $commodity->contact_type = $remoteItem['contact_type'];
+        $commodity->save();
+
+        return true;
     }
 }

@@ -108,9 +108,6 @@ class Commodity extends Manage
      * @param Request $request
      * @return array
      * @throws JSONException
-     * @throws NotFoundException
-     * @throws RuntimeException
-     * @throws \ReflectionException
      */
     public function save(Request $request): array
     {
@@ -162,6 +159,7 @@ class Commodity extends Manage
 
         $save = new Save(\App\Model\Commodity::class);
         $save->setMap($map);
+        $save->addForceMap("config", $map['config'] ?? "");
         $save->enableCreateTime();
         $save = $this->query->save($save);
         if (!$save) {
@@ -176,8 +174,6 @@ class Commodity extends Manage
     /**
      * @return array
      * @throws JSONException
-     * @throws NotFoundException
-     * @throws \ReflectionException
      */
     public function del(): array
     {
@@ -209,16 +205,30 @@ class Commodity extends Manage
      */
     public function fastEnable(): array
     {
-        $list = (array)explode(",", (string)$_POST['list']);
-        unset($_POST['list']);
-        foreach ($_POST as $key => $val) {
+        $map = $this->request->post();
+        $list = (array)explode(",", (string)$this->request->post("list"));
+        $sharedSync = $map['shared_sync'] == 0 ? 0 : 1;
+        $sharedAmountSync = $map['shared_amount_sync'] == 0 ? 0 : 1;
+        $sharedConfigSync = $map['shared_config_sync'] == 0 ? 0 : 1;
+
+        unset($map['list'], $map['shared_sync'], $map['shared_amount_sync'], $map['shared_config_sync']);
+
+        foreach ($map as $key => $val) {
             if ($val == 0) {
-                $_POST[$key] = 0;
+                $map[$key] = 0;
             } else {
-                $_POST[$key] = 1;
+                $map[$key] = 1;
             }
         }
-        \App\Model\Commodity::query()->whereIn('id', $list)->update($_POST);
+
+        \App\Model\Commodity::query()->whereIn('id', $list)->update($map);
+        \App\Model\Commodity::query()->whereIn('id', $list)->where("shared_id", ">", 0)->update([
+            "shared_sync" => $sharedSync,
+            "shared_amount_sync" => $sharedAmountSync,
+            "shared_config_sync" => $sharedConfigSync
+        ]);
+
+
         ManageLog::log($this->getManage(), "[批量更新]商品状态");
         return $this->json(200, '更新成功');
     }

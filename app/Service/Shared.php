@@ -91,14 +91,27 @@ interface Shared
 
 
     /**
+     * @param Commodity $commodity
      * @param \App\Model\Shared $shared
      * @param string $code
      * @param string|null $race
      * @param null|array $sku
      * @return string
      */
-    public function getItemStock(\App\Model\Shared $shared, string $code, ?string $race = null, ?array $sku = []): string;
+    public function getItemStock(Commodity $commodity, \App\Model\Shared $shared, string $code, ?string $race = null, ?array $sku = []): string;
 
+
+    /**
+     * @param Commodity $commodity
+     * @param \App\Model\Shared $shared
+     * @param string $code
+     * @param int $num
+     * @param string|null $race
+     * @param array|null $sku
+     * @param int|null $cardId
+     * @return string|float|int
+     */
+    public function getValuation(Commodity $commodity, \App\Model\Shared $shared, string $code, int $num, ?string $race = null, ?array $sku = [], ?int $cardId = 0): string|float|int;
 
     /**
      * @param string $config
@@ -118,4 +131,11 @@ interface Shared
      * @return string
      */
     public function AdjustmentAmount(int $type, float $premium, string|int|float $amount): string;
+
+
+    /**
+     * @param Commodity|int $commodity
+     * @return bool
+     */
+    public function syncRemoteItem(Commodity|int $commodity): bool;
 }

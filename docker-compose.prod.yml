@@ -1,0 +1,46 @@
+# 生产环境编排：使用 GHCR 预构建镜像，对接 1Panel 中已有的外部 MySQL 与 Redis。
+# 启动：docker compose -f docker-compose.prod.yml up -d
+# 更新：docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+services:
+  app:
+    image: ${ACG_IMAGE:-ghcr.io/wangguo1230/acg-faka:latest}
+    container_name: acg-faka-app
+    restart: unless-stopped
+    ports:
+      - "${ACG_HTTP_PORT:-8080}:80"
+    environment:
+      TZ: Asia/Shanghai
+      # 外部 Redis（1Panel）—— 作为 PHP Session 存储
+      REDIS_HOST: 1Panel-redis-NCe2
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_w6Znf5
+      REDIS_DATABASE: 1
+      # 外部 MySQL（1Panel）—— 首次部署时自动预置 config/database.php
+      DB_HOST: 1Panel-mysql-TTSk
+      DB_DATABASE: acg-faka
+      DB_USERNAME: acg-faka
+      DB_PASSWORD: kKmcjEDTzS4mih8C
+      DB_PREFIX: acg_
+    volumes:
+      - acg_config:/var/www/html/config
+      - acg_install:/var/www/html/kernel/Install
+      - acg_runtime:/var/www/html/runtime
+      - acg_assets_cache:/var/www/html/assets/cache
+      - acg_plugins:/var/www/html/app/Plugin
+      - acg_pay:/var/www/html/app/Pay
+      - acg_themes:/var/www/html/app/View/User/Theme
+    networks:
+      - 1panel-network
+
+volumes:
+  acg_config:
+  acg_install:
+  acg_runtime:
+  acg_assets_cache:
+  acg_plugins:
+  acg_pay:
+  acg_themes:
+
+networks:
+  1panel-network:
+    external: true
