@@ -97,7 +97,7 @@ class Recharge implements \App\Service\Recharge
             $payObject->tradeNo = $order->trade_no;
             $payObject->config = PayConfig::config($pay->handle);
             $payObject->callbackUrl = $callbackDomain . '/user/api/rechargeNotification/callback.' . $pay->handle;
-            $payObject->returnUrl = $clientDomain . '/user/recharge/index';
+            $payObject->returnUrl = $callbackDomain . '/user/recharge/index';
             $payObject->clientIp = $order->create_ip;
             $payObject->code = $pay->code;
             $payObject->handle = $pay->handle;

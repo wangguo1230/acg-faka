@@ -813,9 +813,9 @@ class Order implements \App\Service\Order
 
                     //判断如果登录
                     if ($owner == 0) {
-                        $payObject->returnUrl = $clientDomain . '/user/index/query?tradeNo=' . $order->trade_no;
+                        $payObject->returnUrl = $callbackDomain . '/user/index/query?tradeNo=' . $order->trade_no;
                     } else {
-                        $payObject->returnUrl = $clientDomain . '/user/personal/purchaseRecord?tradeNo=' . $order->trade_no;
+                        $payObject->returnUrl = $callbackDomain . '/user/personal/purchaseRecord?tradeNo=' . $order->trade_no;
                     }
 
                     $payObject->clientIp = Client::getAddress();
