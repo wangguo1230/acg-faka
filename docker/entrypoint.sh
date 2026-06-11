@@ -21,6 +21,23 @@ mkdir -p \
     runtime/view \
     runtime/waf
 
+# 内置主题跟随镜像更新：named volume 只在首次创建时从镜像拷贝内容，之后会
+# 一直遮住镜像里的新模板。每次启动时从镜像预留的纯净副本整目录替换内置主题
+#（避免残留已删除的旧文件），目录名不同的用户自装主题不受影响。
+# 注意：仅同步 app/View/User/Theme 与 runtime/view，app/Pay、app/Plugin
+# 等运行期安装的支付/功能插件卷不做任何改动。
+if [ -d /usr/local/share/acg-faka/Theme ]; then
+    for theme_src in /usr/local/share/acg-faka/Theme/*/; do
+        [ -d "$theme_src" ] || continue
+        theme_name=$(basename "$theme_src")
+        rm -rf "app/View/User/Theme/${theme_name}"
+        cp -a "$theme_src" "app/View/User/Theme/${theme_name}"
+    done
+    # 模板已可能变更，清空编译缓存让模板引擎按需重新编译
+    rm -rf runtime/view/compile runtime/view/cache
+    mkdir -p runtime/view/compile runtime/view/cache
+fi
+
 # 后台“基础设置”会把上传的 Logo 写到 /favicon.ico。
 # 将它落到 assets/cache 这个持久化卷中，避免容器重建后丢失。
 if [ ! -f assets/cache/favicon.ico ]; then
