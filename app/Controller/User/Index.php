@@ -37,7 +37,8 @@ class Index extends User
         }
         $from = (int)$_GET['from'];
 
-        $_GET['cid'] = $_GET['cid'] ?: Config::get("default_category");
+        //仅当未显式传入分类时才回退默认分类；cid="0" 表示「全部」，需保留
+        $_GET['cid'] = (isset($_GET['cid']) && $_GET['cid'] !== '') ? $_GET['cid'] : Config::get("default_category");
 
         //获取所有分类
         $category = Tree::generate($this->shop->getCategory($this->getUserGroup()));

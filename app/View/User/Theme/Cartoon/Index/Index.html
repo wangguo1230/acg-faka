@@ -20,8 +20,9 @@
     <div class="panel-body">
       <div class="mb-3">
         <div class="chip-list">
+            <a data-id="0" class="switch-category chip #{if $categoryId == 0} is-primary #{/if}" href="javascript:void(0);">全部</a>
             #{foreach $category as $cate}
-                <a data-id="#{$cate.id}" class="switch-category chip #{if $cate@first && $categoryId == 0} is-primary #{elseif $cate.id == $categoryId} is-primary #{/if}" href="javascript:void(0);">#{if $cate.id != 'recommend'}<span class="chip-icon" style="background: url('#{$cate.icon}') center/cover no-repeat;"></span>#{/if}#{$cate.name}</a>
+                <a data-id="#{$cate.id}" class="switch-category chip #{if $cate.id == $categoryId} is-primary #{/if}" href="javascript:void(0);">#{if $cate.id != 'recommend'}<span class="chip-icon" style="background: url('#{$cate.icon}') center/cover no-repeat;"></span>#{/if}#{$cate.name}</a>
             #{/foreach}
         </div>
       </div>
