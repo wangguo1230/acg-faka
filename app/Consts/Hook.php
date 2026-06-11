@@ -61,6 +61,9 @@ interface Hook
     //HOOK后台在保存配置时候，可以返回修改后的内容 HOOK时传参：string pluginName,array  postMap
     const ADMIN_API_PLUGIN_SAVE_CONFIG = 0x15;
 
+    //管理员在后台「订单管理」手动发货成功后触发，HOOK时传参：\App\Model\Order $order
+    const ADMIN_API_ORDER_MANUAL_DELIVERY = 0x15001;
+
 
     //客户下单之前触发的点位，可以做一下防刷机制，HOOK时传参：array $_POST
     const USER_API_ORDER_TRADE_BEGIN = 0x16;

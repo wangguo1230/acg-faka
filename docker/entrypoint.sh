@@ -38,6 +38,19 @@ if [ -d /usr/local/share/acg-faka/Theme ]; then
     mkdir -p runtime/view/compile runtime/view/cache
 fi
 
+# 内置插件随镜像分发：与主题不同，这里采用「只补不覆盖」策略——仅当卷里
+# 不存在同名插件目录时才拷入，绝不删除或覆盖用户运行期安装的任何插件
+#（含其 Config 配置与启用状态）。代价是内置插件自身升级不会自动覆盖旧版，
+# 需手动删除卷内对应目录后重启，或走后台插件更新。
+if [ -d /usr/local/share/acg-faka/Plugin ]; then
+    for plugin_src in /usr/local/share/acg-faka/Plugin/*/; do
+        [ -d "$plugin_src" ] || continue
+        plugin_name=$(basename "$plugin_src")
+        [ -d "app/Plugin/${plugin_name}" ] && continue
+        cp -a "$plugin_src" "app/Plugin/${plugin_name}"
+    done
+fi
+
 # 后台“基础设置”会把上传的 Logo 写到 /favicon.ico。
 # 将它落到 assets/cache 这个持久化卷中，避免容器重建后丢失。
 if [ ! -f assets/cache/favicon.ico ]; then

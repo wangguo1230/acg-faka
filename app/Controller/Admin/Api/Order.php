@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controller\Admin\Api;
 
 
+use App\Consts\Hook;
 use App\Controller\Base\API\Manage;
 use App\Entity\Query\Delete;
 use App\Entity\Query\Get;
@@ -89,6 +90,13 @@ class Order extends Manage
         }
 
         ManageLog::log($this->getManage(), "[手动发货]({$map['id']})修改了发货信息");
+
+        //手动发货成功后触发钩子，供通知类插件（如 TG 通知）使用
+        $order = \App\Model\Order::query()->find((int)$map['id']);
+        if ($order) {
+            hook(Hook::ADMIN_API_ORDER_MANUAL_DELIVERY, $order);
+        }
+
         return $this->json(200, '（＾∀＾）发货成功');
     }
 

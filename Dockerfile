@@ -57,6 +57,7 @@ RUN mkdir -p \
         ln -sf assets/cache/favicon.ico /var/www/html/favicon.ico; \
     fi \
     && cp -a /var/www/html/app/View/User/Theme /usr/local/share/acg-faka/Theme \
+    && cp -a /var/www/html/app/Plugin /usr/local/share/acg-faka/Plugin \
     && if [ ! -d /var/www/html/vendor ] || [ ! -f /var/www/html/vendor/autoload.php ]; then \
         composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction; \
     else \
