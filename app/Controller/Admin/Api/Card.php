@@ -253,20 +253,29 @@ class Card extends Manage
         $exportStatus = $map['export_status'];
         $exportNum = (int)$map['export_num'];
         $note = $map['note'] ?: null;
+        //勾选导出：仅导出选中的卡密，忽略筛选条件
+        $selectedIds = !empty($map['ids']) ? array_values(array_filter(array_map('intval', explode(',', (string)$map['ids'])))) : [];
 
         unset($map['export_status']);
         unset($map['export_num']);
+        unset($map['ids']);
 
 
         $get = new Get(\App\Model\Card::class);
-        $get->setWhere($map);
+        if (empty($selectedIds)) {
+            $get->setWhere($map);
+        }
 
         if ($exportNum > 0) {
             $get->setPaginate(1, $exportNum);
-            $data = $this->query->get($get);
-        } else {
-            $data = $this->query->get($get);
         }
+
+        $data = $this->query->get($get, function (Builder $builder) use ($selectedIds) {
+            if (!empty($selectedIds)) {
+                $builder = $builder->whereIn("id", $selectedIds);
+            }
+            return $builder;
+        });
 
         $card = '';
         $ids = [];
@@ -296,10 +305,11 @@ class Card extends Manage
             \App\Model\Card::query()->whereIn('id', $ids)->whereRaw("status!=1")->update(['status' => 1, 'purchase_time' => Date::current()]);
         }
 
-        ManageLog::log($this->getManage(), "[卡密导出]导出卡密，共计：" . count($data));
+        $count = count($data['list']);
+        ManageLog::log($this->getManage(), "[卡密导出]导出卡密，共计：" . $count);
         header('Content-Type:application/octet-stream');
         header('Content-Transfer-Encoding:binary');
-        header('Content-Disposition:attachment; filename=卡密导出(' . count($data) . ')-' . Date::current() . '.txt');
+        header('Content-Disposition:attachment; filename=卡密导出(' . $count . ')-' . Date::current() . '.txt');
         return $card;
     }
 }

@@ -1,5 +1,15 @@
 !function () {
     let table, _createForms = [], _createSearchs = [];
+
+    // 通过动态表单 POST 触发文件下载（用于参数体积较大的场景，规避 GET URL 长度限制）
+    const postDownload = (action, params) => {
+        const $form = $('<form>', {method: 'POST', action: action, target: '_blank'});
+        for (const k in params) {
+            $form.append($('<input>', {type: 'hidden', name: k, value: params[k]}));
+        }
+        $form.appendTo('body').submit().remove();
+    };
+
     const uploadCard = () => {
         component.popup({
             submit: '/admin/api/card/save',
@@ -449,18 +459,21 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月
     });
 
 
-    $('.btn-app-export').click(function () {
-
+    // selectedIds 为空数组时按筛选条件导出；非空时仅导出勾选的卡密
+    const exportPopup = (selectedIds = []) => {
+        const bySelected = selectedIds.length > 0;
         component.popup({
             tab: [
                 {
-                    name: util.icon("fa-duotone fa-regular fa-file-export") + " 导出卡密",
+                    name: util.icon("fa-duotone fa-regular fa-file-export") + (bySelected ? " 导出选中卡密" : " 导出卡密"),
                     form: [
                         {
                             name: "custom",
                             type: "custom",
                             complete: (obj, dom) => {
-                                dom.html('<div style="margin-bottom: 25px;color: #27bd27;font-weight: bolder;">导出程序将根据您通过查询功能筛选出的卡密进行导出。如果您填写了导出数量，将导出指定数量的卡密；如果您未填写数量，则将导出您筛选的全部卡密。</div>');
+                                dom.html(bySelected
+                                    ? `<div style="margin-bottom: 25px;color: #27bd27;font-weight: bolder;">将导出您勾选的 ${selectedIds.length} 条卡密（忽略查询筛选条件）。如果您填写了导出数量，将仅导出其中指定数量的卡密。</div>`
+                                    : '<div style="margin-bottom: 25px;color: #27bd27;font-weight: bolder;">导出程序将根据您通过查询功能筛选出的卡密进行导出。如果您填写了导出数量，将导出指定数量的卡密；如果您未填写数量，则将导出您筛选的全部卡密。</div>');
                             }
                         },
                         {
@@ -496,22 +509,47 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月
             maxmin: false,
             autoPosition: true,
             submit: (data, index) => {
-                let searchData = table.getSearchData();
-                let state = table.getState();
-                let query = util.objectToQueryString(Object.assign(searchData, data));
+                let triggerDownload;
+                if (bySelected) {
+                    // 选中导出：用 POST 表单提交，规避大量勾选 id 导致的 URL 超长
+                    let params = Object.assign({ids: selectedIds.join(",")}, data);
+                    triggerDownload = () => postDownload("/admin/api/card/export", params);
+                } else {
+                    // 筛选导出：参数量小，沿用 GET 下载
+                    let searchData = table.getSearchData();
+                    let state = table.getState();
+                    let params = Object.assign(searchData, data);
+                    params["equal-" + state.field] = state.value;
+                    let url = "/admin/api/card/export?" + util.objectToQueryString(params);
+                    triggerDownload = () => window.open(url);
+                }
 
                 layer.close(index);
 
-                let url = "/admin/api/card/export?" + query + "&equal-" + state.field + "=" + state.value;
                 if (data.export_status == 2) {
                     message.dangerPrompt("您正在执行高风险的卡密导出操作，需要注意此操作无法恢复数据。如果您只是希望卡密不再可见，我们建议您选择锁定导出的卡密。", "我确认导出并删除卡密", () => {
-                        window.open(url);
+                        triggerDownload();
                     });
                 } else {
-                    window.open(url);
+                    triggerDownload();
                 }
             },
         });
+    };
+
+
+    $('.btn-app-export').click(function () {
+        exportPopup();
+    });
+
+
+    $('.btn-app-export-selected').click(function () {
+        let ids = table.getSelectionIds();
+        if (ids.length == 0) {
+            layer.msg("请至少勾选1个卡密再进行导出！");
+            return;
+        }
+        exportPopup(ids);
     });
 
 
