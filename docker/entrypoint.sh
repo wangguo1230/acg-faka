@@ -124,4 +124,12 @@ chown -R www-data:www-data \
     kernel/Install \
     runtime
 
+# 内置插件自愈：对 Config.php 中标记为启用(STATUS=1)的插件，在每次启动时以 www-data
+# 身份重建 hook 缓存。加密引擎 _plugin_start 无法正常启用自建插件、或换宿主机导致
+# HWID 变化使旧缓存失效时，靠这一步让已启用插件的 hook 在启动后依旧可用。
+# 以 www-data 运行以保证 HWID 与 Web 端一致；失败只跳过，绝不阻塞容器启动。
+if [ -f kernel/Install/Lock ]; then
+    su -s /bin/sh www-data -c "php /usr/local/bin/acg-faka-plugin-heal.php" || true
+fi
+
 exec docker-php-entrypoint "$@"
