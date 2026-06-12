@@ -38,16 +38,28 @@ if [ -d /usr/local/share/acg-faka/Theme ]; then
     mkdir -p runtime/view/compile runtime/view/cache
 fi
 
-# 内置插件随镜像分发：与主题不同，这里采用「只补不覆盖」策略——仅当卷里
-# 不存在同名插件目录时才拷入，绝不删除或覆盖用户运行期安装的任何插件
-#（含其 Config 配置与启用状态）。代价是内置插件自身升级不会自动覆盖旧版，
-# 需手动删除卷内对应目录后重启，或走后台插件更新。
+# 内置插件随镜像分发：与主题同理，每次启动用镜像里的纯净副本整目录替换内置插件代码
+#（镜像为唯一可信源，避免残留已删除的旧文件、或卷内被手动改坏的旧版本），但保留卷内
+# 每个插件 Config/Config.php 的运行态（启用状态 STATUS、Bot Token、Chat ID 等用户配置）。
+# 这样升级镜像即可自动更新内置插件代码，无需手动进卷打补丁，也不会冲掉已填配置与启用状态。
+# 目录名不同的用户自装插件不受影响。
 if [ -d /usr/local/share/acg-faka/Plugin ]; then
     for plugin_src in /usr/local/share/acg-faka/Plugin/*/; do
         [ -d "$plugin_src" ] || continue
         plugin_name=$(basename "$plugin_src")
-        [ -d "app/Plugin/${plugin_name}" ] && continue
-        cp -a "$plugin_src" "app/Plugin/${plugin_name}"
+        target="app/Plugin/${plugin_name}"
+        keep=""
+        if [ -f "${target}/Config/Config.php" ]; then
+            keep=$(mktemp)
+            cp "${target}/Config/Config.php" "$keep"
+        fi
+        rm -rf "$target"
+        cp -a "$plugin_src" "$target"
+        if [ -n "$keep" ]; then
+            mkdir -p "${target}/Config"
+            cp "$keep" "${target}/Config/Config.php"
+            rm -f "$keep"
+        fi
     done
 fi
 

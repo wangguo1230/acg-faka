@@ -105,11 +105,21 @@ class Plugin extends Manage
         $config = $plugin[\App\Consts\Plugin::PLUGIN_CONFIG];
 
         if (isset($map['STATUS'])) {
+            $configFile = BASE_PATH . '/app/Plugin/' . $id . '/Config/Config.php';
             if ((int)$config['STATUS'] == 0 && $map['STATUS'] == 1) {
                 _plugin_start($id);
+                // 回读实际文件校验：_plugin_start 内部若因插件代码错误（如 Hook 注解引用了
+                // 不存在的常量）静默失败，STATUS 不会被写入。直接读磁盘字节、绕过 opcache，
+                // 确认是否真的启动，避免出现“返回已启动但其实没启用”的假成功。
+                if (!self::statusWritten($configFile, 1)) {
+                    throw new JSONException("插件启动失败：插件代码可能存在错误（例如 Hook 注解引用了不存在的常量），请检查插件后重试");
+                }
                 return $this->json(200, "插件已启动");
             } else if ((int)$config['STATUS'] == 1 && $map['STATUS'] == 0) {
                 _plugin_stop($id);
+                if (!self::statusWritten($configFile, 0)) {
+                    throw new JSONException("插件停止失败，请重试");
+                }
                 return $this->json(200, "插件已停止");
             }
         }
@@ -124,6 +134,22 @@ class Plugin extends Manage
         $configFile = BASE_PATH . '/app/Plugin/' . $id . '/Config/Config.php';
         setConfig($config, $configFile);
         return $this->json(200, '配置已生效');
+    }
+
+    /**
+     * 直接读取插件 Config.php 的磁盘内容，校验 STATUS 是否已写成期望值。
+     * 用 file_get_contents 读原始字节，不经 require/opcache，避免同一请求内读到旧缓存。
+     * @param string $configFile
+     * @param int $expect
+     * @return bool
+     */
+    private static function statusWritten(string $configFile, int $expect): bool
+    {
+        $raw = (string)@file_get_contents($configFile);
+        if ($raw === '') {
+            return false;
+        }
+        return (bool)preg_match("/['\"]?STATUS['\"]?\\s*=>\\s*['\"]?" . $expect . "['\"]?\\s*,/", $raw);
     }
 
     /**
