@@ -59,7 +59,11 @@ try {
         exit(0);
     }
 
-    // 收集 Config.php 中 STATUS=1 的插件
+    // 强制启用清单：这些自建插件无法通过加密引擎 _plugin_start 正常启用，
+    // 每次启动无视 Config.php 里的 STATUS，强制置为启用并重建 hook。
+    $forceEnable = ['TgNotify'];
+
+    // 收集要重建 hook 的插件：Config 中 STATUS=1 的 + 强制清单里的
     $dir = BASE_PATH . '/app/Plugin';
     $enabled = [];
     foreach ((array)@scandir($dir) as $name) {
@@ -71,13 +75,23 @@ try {
             continue;
         }
         $cfg = @include $cfgFile;
-        if (is_array($cfg) && (int)($cfg['STATUS'] ?? 0) === 1) {
+        if (!is_array($cfg)) {
+            continue;
+        }
+        $isEnabled = (int)($cfg['STATUS'] ?? 0) === 1;
+        if (in_array($name, $forceEnable, true) && !$isEnabled) {
+            $cfg['STATUS'] = 1;
+            setConfig($cfg, $cfgFile); // 强制写启用，再重建 hook
+            fwrite(STDOUT, "[plugin-heal] 强制启用 $name\n");
+            $isEnabled = true;
+        }
+        if ($isEnabled) {
             $enabled[] = $name;
         }
     }
 
     if (!$enabled) {
-        fwrite(STDOUT, "[plugin-heal] 无已启用插件，无需重建\n");
+        fwrite(STDOUT, "[plugin-heal] 无需重建的插件\n");
         exit(0);
     }
 
