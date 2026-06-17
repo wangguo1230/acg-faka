@@ -249,8 +249,9 @@ class Card extends Manage
      */
     public function export(): string
     {
-        $map = $_GET;
-        $exportStatus = $map['export_status'];
+        // 勾选导出走 POST 表单(规避 URL 超长)、筛选导出走 GET，故用 $_REQUEST 兼容两者
+        $map = $_REQUEST;
+        $exportStatus = $map['export_status'] ?? 0;
         $exportNum = (int)$map['export_num'];
         $note = $map['note'] ?: null;
         //勾选导出：仅导出选中的卡密，忽略筛选条件
