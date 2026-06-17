@@ -1,14 +1,20 @@
 <?php
 /**
- * 内置插件自愈脚本（容器启动时由 entrypoint 调用）。
+ * 内置插件自愈脚本（由 entrypoint 调用）。
  *
  * 背景：加密引擎 kernel/Plugin.php 的 _plugin_start() 对自建插件会静默拒绝，
  * 无法在后台/CLI 正常「启用」；此外换宿主机会导致 HWID 变化，使旧的 hook 缓存
- * （按 HWID 加密）失效。本脚本在每次启动时，对 Config.php 中已标记启用
- * （STATUS=1）的插件，用当前 HWID 从零重建 hook 缓存，保证它们的钩子始终可用。
+ * （按 HWID 加密）失效。本脚本对 Config.php 中已标记启用（STATUS=1）的插件，
+ * 以及强制启用清单内的插件，用当前 HWID 从零重建 hook 缓存，保证钩子始终可用。
  *
- * 原则：任何异常都只跳过、绝不阻塞容器启动；只读 Config.php 的启用状态，
- * 不改任何插件的配置。需以 www-data 身份运行，确保 HWID 与 Web 端一致。
+ * 两种运行模式：
+ *   - 默认（启动时调用）：无条件重建 hook 缓存，顺带修复换机器/HWID 变化/缓存损坏。
+ *   - --if-needed（守护循环周期调用）：仅当强制清单插件的 STATUS 被后台「保存配置/
+ *     停用」重置为 0、或 hook 缓存丢失时才执行重建；否则立即退出，平时零开销
+ *     （连框架与数据库都不加载）。用于把被后台动作重置掉的启用状态自动恢复。
+ *
+ * 原则：任何异常都只跳过、绝不阻塞容器启动；只在需要时把强制清单插件的 STATUS
+ * 写回 1（保留 Bot Token 等其余配置）。需以 www-data 身份运行，确保 HWID 与 Web 端一致。
  */
 declare(strict_types=1);
 
@@ -17,10 +23,35 @@ const BASE_PATH = "/var/www/html";
 
 error_reporting(0);
 
+// 守护模式：仅在检测到强制清单插件被重置时才真正干活
+$daemon = in_array('--if-needed', $argv, true);
+
+// 强制启用清单：这些自建插件无法通过加密引擎 _plugin_start 正常启用，
+// 自愈时无视 Config.php 里的 STATUS，强制置为启用并重建 hook。
+$forceEnable = ['TgNotify'];
+$pluginDir = BASE_PATH . '/app/Plugin';
+$hookCache = BASE_PATH . '/runtime/plugin/hook';
+
 try {
     if (!file_exists(BASE_PATH . '/kernel/Install/Lock')) {
         fwrite(STDOUT, "[plugin-heal] 系统未安装，跳过\n");
         exit(0);
+    }
+
+    // 守护模式快速跳过：稳态下（强制清单都已启用且 hook 缓存在）无需加载框架/连库/重建。
+    if ($daemon) {
+        $needHeal = !is_file($hookCache);
+        foreach ($forceEnable as $name) {
+            $cfgFile = "$pluginDir/$name/Config/Config.php";
+            $cfg = is_file($cfgFile) ? @include $cfgFile : null;
+            if (!is_array($cfg) || (int)($cfg['STATUS'] ?? 0) !== 1) {
+                $needHeal = true; // STATUS 被后台重置为 0，需要纠正
+                break;
+            }
+        }
+        if (!$needHeal) {
+            exit(0);
+        }
     }
 
     require BASE_PATH . '/vendor/autoload.php';
@@ -59,18 +90,13 @@ try {
         exit(0);
     }
 
-    // 强制启用清单：这些自建插件无法通过加密引擎 _plugin_start 正常启用，
-    // 每次启动无视 Config.php 里的 STATUS，强制置为启用并重建 hook。
-    $forceEnable = ['TgNotify'];
-
     // 收集要重建 hook 的插件：Config 中 STATUS=1 的 + 强制清单里的
-    $dir = BASE_PATH . '/app/Plugin';
     $enabled = [];
-    foreach ((array)@scandir($dir) as $name) {
+    foreach ((array)@scandir($pluginDir) as $name) {
         if ($name === '.' || $name === '..') {
             continue;
         }
-        $cfgFile = "$dir/$name/Config/Config.php";
+        $cfgFile = "$pluginDir/$name/Config/Config.php";
         if (!is_file($cfgFile)) {
             continue;
         }
@@ -81,7 +107,7 @@ try {
         $isEnabled = (int)($cfg['STATUS'] ?? 0) === 1;
         if (in_array($name, $forceEnable, true) && !$isEnabled) {
             $cfg['STATUS'] = 1;
-            setConfig($cfg, $cfgFile); // 强制写启用，再重建 hook
+            setConfig($cfg, $cfgFile); // 强制写启用（保留 token 等其余配置），再重建 hook
             fwrite(STDOUT, "[plugin-heal] 强制启用 $name\n");
             $isEnabled = true;
         }
@@ -96,7 +122,7 @@ try {
     }
 
     // 从零重建 hook 缓存：用当前 HWID 重写，顺带修复换机器/缓存损坏
-    @unlink(BASE_PATH . '/runtime/plugin/hook');
+    @unlink($hookCache);
 
     $healed = [];
     foreach ($enabled as $name) {

@@ -130,6 +130,18 @@ chown -R www-data:www-data \
 # 以 www-data 运行以保证 HWID 与 Web 端一致；失败只跳过，绝不阻塞容器启动。
 if [ -f kernel/Install/Lock ]; then
     su -s /bin/sh www-data -c "php /usr/local/bin/acg-faka-plugin-heal.php" || true
+
+    # 守护：强制启用清单内的自建插件（如 TgNotify），其 STATUS 会被后台「保存配置 /
+    # 停用」自动重置为 0，导致一段时间后后台显示「未启用」。这里周期性以 www-data
+    # 跑自愈的 --if-needed 模式：仅当检测到 STATUS 被重置或 hook 缓存丢失时才纠正，
+    # 平时立即退出（不连库、零开销）。后台进程在下方 exec 后由 PID 1 收养，随容器销毁。
+    PLUGIN_HEAL_INTERVAL="${PLUGIN_HEAL_INTERVAL:-300}"
+    (
+        while true; do
+            sleep "$PLUGIN_HEAL_INTERVAL"
+            su -s /bin/sh www-data -c "php /usr/local/bin/acg-faka-plugin-heal.php --if-needed" >/dev/null 2>&1 || true
+        done
+    ) &
 fi
 
 exec docker-php-entrypoint "$@"
