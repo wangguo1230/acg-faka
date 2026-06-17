@@ -19,6 +19,7 @@ use App\Util\PayConfig;
 use App\Util\Str;
 use Illuminate\Database\Capsule\Manager as DB;
 use Kernel\Annotation\Inject;
+use Kernel\Util\Decimal;
 use Kernel\Exception\JSONException;
 use Kernel\Exception\RuntimeException;
 use Kernel\Waf\Firewall;
@@ -89,8 +90,10 @@ class Recharge implements \App\Service\Recharge
                 require($autoload);
             }
             //增加接口手续费：0.9.6-beta
-            $order->amount = $order->amount + ($pay->cost_type == 0 ? $pay->cost : $order->amount * $pay->cost);
-            $order->amount = (float)sprintf("%.2f", (int)(string)($order->amount * 100) / 100);
+            // 手续费单独记于 pay_cost（与商品订单 Order 一致）：amount 为含手续费的实付额（用于网关收款与回调对账），
+            // 到账时再扣回 pay_cost，保证充进余额的是用户的原始充值额，而非含手续费的实付额。
+            $order->pay_cost = $pay->cost_type == 0 ? $pay->cost : (float)(new Decimal($order->amount, 2))->mul($pay->cost)->getAmount();
+            $order->amount = (float)(new Decimal($order->amount, 2))->add($order->pay_cost)->getAmount();
 
             $payObject = new $class;
             $payObject->amount = $order->amount;
@@ -210,8 +213,11 @@ class Recharge implements \App\Service\Recharge
         $user = $recharge->user;
 
         if ($user) {
-            $rechargeWelfareAmount = $this->calcAmount($recharge->amount);
-            Bill::create($user, $recharge->amount, Bill::TYPE_ADD, "充值", 0); //用户余额
+            // 到账额 = 实付额(amount) - 接口手续费(pay_cost)，即用户的原始充值额；
+            // 手续费由用户承担、用于覆盖支付通道成本，不计入余额。赠送也按原始额计算。
+            $creditAmount = (float)(new Decimal($recharge->amount, 2))->sub((float)$recharge->pay_cost)->getAmount();
+            $rechargeWelfareAmount = $this->calcAmount($creditAmount);
+            Bill::create($user, $creditAmount, Bill::TYPE_ADD, "充值", 0); //用户余额
             if ($rechargeWelfareAmount > 0) {
                 Bill::create($user, $rechargeWelfareAmount, Bill::TYPE_ADD, "充值赠送", 0); //用户余额
             }

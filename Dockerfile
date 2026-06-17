@@ -37,6 +37,7 @@ COPY . /var/www/html
 COPY docker/php.ini /usr/local/etc/php/conf.d/acg-faka.ini
 COPY docker/entrypoint.sh /usr/local/bin/acg-faka-entrypoint
 COPY docker/plugin-heal.php /usr/local/bin/acg-faka-plugin-heal.php
+COPY docker/migrate.php /usr/local/bin/acg-faka-migrate.php
 
 RUN mkdir -p \
         /usr/local/share/acg-faka \

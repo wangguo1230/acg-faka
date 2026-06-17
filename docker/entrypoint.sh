@@ -124,6 +124,12 @@ chown -R www-data:www-data \
     kernel/Install \
     runtime
 
+# 启动迁移：用框架 Schema builder 幂等补齐随镜像新增的数据库列（如 user_recharge.pay_cost），
+# 使「升级镜像即完成 schema 迁移」。必须在应用读写新列前执行；失败只跳过，绝不阻塞启动。
+if [ -f kernel/Install/Lock ]; then
+    su -s /bin/sh www-data -c "php /usr/local/bin/acg-faka-migrate.php" || true
+fi
+
 # 内置插件自愈：对 Config.php 中标记为启用(STATUS=1)的插件，在每次启动时以 www-data
 # 身份重建 hook 缓存。加密引擎 _plugin_start 无法正常启用自建插件、或换宿主机导致
 # HWID 变化使旧缓存失效时，靠这一步让已启用插件的 hook 在启动后依旧可用。
