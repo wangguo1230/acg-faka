@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# pre-push 钩子：推送 docker-deploy / main 时，本地构建并推送生产镜像到 GHCR。
+# 已替代 GitHub Actions 远程自动构建（见 .github/workflows/docker-publish.yml 已停用触发）。
+#
+# 设计取舍：镜像构建失败不阻断 git push（代码推送与镜像构建相互独立），
+# 但会醒目告警并提示手动补构建命令，避免误以为镜像已刷新。
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# 从 stdin 解析被推送的分支（格式：<local ref> <local oid> <remote ref> <remote oid>）
+target_branch=""
+while read -r local_ref _local_oid _remote_ref _remote_oid; do
+  case "$local_ref" in
+    refs/heads/docker-deploy) target_branch="docker-deploy" ;;
+    refs/heads/main)          [ -z "$target_branch" ] && target_branch="main" ;;
+  esac
+done
+
+# 非目标分支：不构建，直接放行
+if [ -z "$target_branch" ]; then
+  exit 0
+fi
+
+echo "==> [pre-push] 检测到推送 ${target_branch}，开始本地构建生产镜像..."
+if bash "${REPO_ROOT}/docker/build-push.sh" "$target_branch"; then
+  echo "==> [pre-push] 镜像已构建并推送，继续 git push"
+else
+  echo "!!  [pre-push] 镜像构建/推送失败——git push 仍将继续（代码与镜像独立）"
+  echo "!!  修复后手动补构建：bash docker/build-push.sh ${target_branch}"
+fi
+
+exit 0

@@ -1,12 +1,8 @@
 name: Build and Publish Docker image
 
+# 远程自动构建已停用：改为本地 pre-push 钩子构建（见 .githooks/pre-push、docker/build-push.sh）。
+# GHCR 远程构建常滞后导致生产镜像落后，故不再随 push 触发；仅保留手动触发作兜底。
 on:
-  push:
-    branches:
-      - main
-      - docker-deploy
-    tags:
-      - "v*"
   workflow_dispatch:
 
 env:
