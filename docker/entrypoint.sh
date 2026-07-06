@@ -63,6 +63,18 @@ if [ -d /usr/local/share/acg-faka/Plugin ]; then
     done
 fi
 
+# config/app.php(版本号)、config/dependencies.php(DI 绑定)是随镜像分发的静态配置，
+# 与主题/插件同理：named volume 只在首次创建时从镜像拷贝，之后会一直遮住镜像里的新版本，
+# 导致升级镜像后页面版本号、依赖注入停留在旧版。每次启动从镜像纯净副本覆盖这两个文件；
+# database.php 属运行态(DB 连接)、waf/ 可能被用户调整，均不在此处覆盖。
+if [ -d /usr/local/share/acg-faka/config ]; then
+    for cf in app.php dependencies.php; do
+        if [ -f "/usr/local/share/acg-faka/config/${cf}" ]; then
+            cp "/usr/local/share/acg-faka/config/${cf}" "config/${cf}"
+        fi
+    done
+fi
+
 # 后台“基础设置”会把上传的 Logo 写到 /favicon.ico。
 # 将它落到 assets/cache 这个持久化卷中，避免容器重建后丢失。
 if [ ! -f assets/cache/favicon.ico ]; then

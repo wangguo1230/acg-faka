@@ -60,6 +60,7 @@ RUN mkdir -p \
     fi \
     && cp -a /var/www/html/app/View/User/Theme /usr/local/share/acg-faka/Theme \
     && cp -a /var/www/html/app/Plugin /usr/local/share/acg-faka/Plugin \
+    && cp -a /var/www/html/config /usr/local/share/acg-faka/config \
     && if [ ! -d /var/www/html/vendor ] || [ ! -f /var/www/html/vendor/autoload.php ]; then \
         composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction; \
     else \
