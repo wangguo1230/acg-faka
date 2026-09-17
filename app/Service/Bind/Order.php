@@ -831,9 +831,9 @@ class Order implements \App\Service\Order
                     $order->amount = (new Decimal($order->amount, 2))->add($order->pay_cost)->getAmount();
 
                     if ($owner == 0) {
-                        $returnUrl = $callbackDomain . '/user/index/query?tradeNo=' . $order->trade_no;
+                        $returnUrl = $clientDomain . '/user/index/query?tradeNo=' . $order->trade_no;
                     } else {
-                        $returnUrl = $callbackDomain . '/user/personal/purchaseRecord?tradeNo=' . $order->trade_no;
+                        $returnUrl = $clientDomain . '/user/personal/purchaseRecord?tradeNo=' . $order->trade_no;
                     }
 
                     $order->gateway_amount = Currency::toCny($order->amount);

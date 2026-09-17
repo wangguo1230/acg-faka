@@ -67,8 +67,12 @@ try {
         if (!$schema->hasTable($table)) continue;
         foreach ($defs as $column => $define) {
             if (!$schema->hasColumn($table, $column)) {
-                $schema->table($table, $define);
-                fwrite(STDOUT, "[migrate] {$table}.{$column} 已添加\n");
+                try {
+                    $schema->table($table, $define);
+                    fwrite(STDOUT, "[migrate] {$table}.{$column} 已添加\n");
+                } catch (\Throwable $e) {
+                    fwrite(STDERR, "[migrate] {$table}.{$column} 失败：{$e->getMessage()}\n");
+                }
             }
         }
     }
