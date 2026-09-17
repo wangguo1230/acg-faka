@@ -38,7 +38,7 @@ try {
 
     $schema = $capsule->schema();
 
-    // 迁移：user_recharge 增加 pay_cost（支付接口手续费）列。
+    // 迁移：为存量数据库补齐 3.7.x 新增字段。
     // 充值到账额 = amount - pay_cost，旧库无此列时充值会因 Unknown column 写入失败。
     if ($schema->hasTable('user_recharge') && !$schema->hasColumn('user_recharge', 'pay_cost')) {
         $schema->table('user_recharge', function ($table) {
@@ -46,6 +46,31 @@ try {
             $table->decimal('pay_cost', 10, 2)->unsigned()->nullable()->default(0)->after('amount')->comment('支付接口手续费');
         });
         fwrite(STDOUT, "[migrate] user_recharge.pay_cost 已添加\n");
+    }
+    $columns = [
+        'user_recharge' => [
+            'gateway_amount' => fn($t) => $t->decimal('gateway_amount', 10, 2)->unsigned()->nullable()->after('amount'),
+        ],
+        'order' => [
+            'gateway_amount' => fn($t) => $t->decimal('gateway_amount', 10, 2)->unsigned()->nullable()->after('amount'),
+        ],
+        'pay' => [
+            'pay_config_id' => fn($t) => $t->unsignedInteger('pay_config_id')->default(0)->after('handle'),
+            'archived' => fn($t) => $t->unsignedTinyInteger('archived')->default(0)->after('cost_type'),
+        ],
+        'commodity' => [
+            'shared_premium_template' => fn($t) => $t->unsignedInteger('shared_premium_template')->default(0)->after('shared_premium_type'),
+            'tags' => fn($t) => $t->string('tags', 1000)->nullable()->after('widget'),
+        ],
+    ];
+    foreach ($columns as $table => $defs) {
+        if (!$schema->hasTable($table)) continue;
+        foreach ($defs as $column => $define) {
+            if (!$schema->hasColumn($table, $column)) {
+                $schema->table($table, $define);
+                fwrite(STDOUT, "[migrate] {$table}.{$column} 已添加\n");
+            }
+        }
     }
 
     fwrite(STDOUT, "[migrate] 完成\n");
