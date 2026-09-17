@@ -7,6 +7,7 @@ namespace App\Controller\Admin\Api;
 use App\Controller\Base\API\Manage;
 use App\Entity\Query\Get;
 use App\Interceptor\ManageSession;
+use App\Interceptor\Owner;
 use App\Model\ManageLog;
 use App\Service\Query;
 use App\Util\Date;
@@ -17,7 +18,8 @@ use Kernel\Annotation\Inject;
 use Kernel\Annotation\Interceptor;
 use Kernel\Exception\JSONException;
 
-#[Interceptor(ManageSession::class, Interceptor::TYPE_API)]
+//提现审批/结算是真实资金决策，收敛到站长(type==0)本人：ManageSession 先加载会话，Owner 再校验档位（F-12）
+#[Interceptor([ManageSession::class, Owner::class], Interceptor::TYPE_API)]
 class Cash extends Manage
 {
     #[Inject]
@@ -52,12 +54,29 @@ class Cash extends Manage
      */
     public function decide(): array
     {
-        $id = (int)$_POST['id'];
-        $status = (int)$_POST['status'];
-        $message = (string)$_POST['message'];
+        if (strtoupper($this->request->method()) !== 'POST') {
+            throw new JSONException('提现处理只接受 POST 请求');
+        }
+        $id = filter_var($_POST['id'] ?? null, FILTER_VALIDATE_INT);
+        $status = filter_var($_POST['status'] ?? null, FILTER_VALIDATE_INT);
+        $rawMessage = $_POST['message'] ?? '';
+        if (!is_scalar($rawMessage) && $rawMessage !== null) {
+            throw new JSONException('请求参数不正确');
+        }
+        $message = trim((string)$rawMessage);
+
+        if ($id === false || $id <= 0 || $status === false || !in_array($status, [0, 1], true)) {
+            throw new JSONException("请求参数不正确");
+        }
+        if ($status === 1 && $message === '') {
+            throw new JSONException("请输入驳回理由");
+        }
+        if (mb_strlen($message) > 64) {
+            throw new JSONException('驳回理由不能超过 64 个字');
+        }
 
         DB::transaction(function () use ($message, $status, $id) {
-            $cash = \App\Model\Cash::query()->find($id);
+            $cash = \App\Model\Cash::query()->lockForUpdate()->find($id);
             if (!$cash) {
                 throw new JSONException("该记录不存在");
             }
@@ -76,7 +95,7 @@ class Cash extends Manage
                 $cash->status = 2;
                 $cash->message = $message;
                 $cash->save();
-                $user = $cash->user;
+                $user = \App\Model\User::query()->lockForUpdate()->find($cash->user_id);
                 if ($user instanceof \App\Model\User) {
                     //驳回钱款
                     \App\Model\Bill::create($user, $cash->amount + (float)$cash->cost, \App\Model\Bill::TYPE_ADD, "兑现被拒绝", 1);
@@ -95,7 +114,17 @@ class Cash extends Manage
      */
     public function settlement(): array
     {
-        $amount = (float)$_POST['amount'];
+        if (strtoupper($this->request->method()) !== 'POST') {
+            throw new JSONException('自动结算只接受 POST 请求');
+        }
+        $rawAmount = $_POST['amount'] ?? null;
+        if (!is_numeric($rawAmount)) {
+            throw new JSONException("请输入有效的最低结算金额");
+        }
+        $amount = (float)$rawAmount;
+        if (!is_finite($amount) || $amount <= 0) {
+            throw new JSONException("最低结算金额必须大于 0");
+        }
         $this->cash->settlement($amount);
 
         ManageLog::log($this->getManage(), "进行了一键自动结算，金额：" . $amount);

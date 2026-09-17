@@ -44,6 +44,11 @@ class Security extends User
             throw new JSONException("不支持的结算方式");
         }
 
+        //wallet_address 是 varchar(64)，超长直接入库会触发 MySQL 1406→500。提前给出干净的业务错误。
+        if (mb_strlen((string)$user->wallet_address) > 64) {
+            throw new JSONException("钱包地址过长");
+        }
+
         $plugin = (array)$this->request->post("plugin");
 
         $fields = [
@@ -86,7 +91,9 @@ class Security extends User
                 throw new JSONException('非法字段名#0');
             }
 
-            if (!preg_match('/^[a-zA-Z0-9_]+$/', $key)) {
+            //必须是合法列名标识符（字母或下划线开头，不允许数字开头）。这样纯数字键（plugin 传标量时
+            //(array) 强转出的 "0"）会被干净拒绝，而不是走到 $user->{'0'} 生成非法列名→PDOException→500。
+            if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $key)) {
                 throw new JSONException('非法字段名#1');
             }
 
@@ -123,10 +130,15 @@ class Security extends User
      */
     public function email(): array
     {
+        //改绑前必须用登录密码二次验证：只凭会话（可能经 XSS/共享设备被窃）就能改绑，会被攻击者改到
+        //自己的邮箱再走找回密码永久接管（F-33）。要求账号密码=只有会话也改不了绑定。
+        $user = $this->getUser();
+        if (!Str::verifyPassword((string)$user->password, (string)$user->salt, (string)($_POST['password'] ?? ''), (string)$this->request->unsafePost('password'))) {
+            throw new JSONException("登录密码不正确");
+        }
         if (!$this->email->checkCaptcha($_POST['email'], Email::CAPTCHA_BIND_NEW, (int)$_POST['email_captcha'])) {
             throw new JSONException("邮箱验证码不正确");
         }
-        $user = $this->getUser();
         $user->email = $_POST['email'];
         $user->save();
 
@@ -140,10 +152,14 @@ class Security extends User
      */
     public function phone(): array
     {
+        //改绑前必须用登录密码二次验证（同 email()，防会话被窃后改绑手机再走找回密码永久接管，F-33）。
+        $user = $this->getUser();
+        if (!Str::verifyPassword((string)$user->password, (string)$user->salt, (string)($_POST['password'] ?? ''), (string)$this->request->unsafePost('password'))) {
+            throw new JSONException("登录密码不正确");
+        }
         if (!$this->sms->checkCaptcha($_POST['phone'], Sms::CAPTCHA_BIND_NEW, (int)$_POST['phone_captcha'])) {
             throw new JSONException("手机验证码不正确");
         }
-        $user = $this->getUser();
         $user->phone = $_POST['phone'];
         $user->save();
 
@@ -160,7 +176,8 @@ class Security extends User
         $password = (string)$_POST['password'];
         $rePassword = (string)$_POST['re_password'];
         $user = $this->getUser();
-        if (Str::generatePassword($oldPassword, $user->salt) != $user->password) {
+        //兼容旧清洗管线时代哈希的特殊字符密码（#833），改密成功后即升级为新形态
+        if (!Str::verifyPassword((string)$user->password, (string)$user->salt, $oldPassword, (string)$this->request->unsafePost('old_password'))) {
             throw new JSONException("旧密码输入不正确");
         }
         if ($password != $rePassword) {

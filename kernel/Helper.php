@@ -216,12 +216,111 @@ if (!function_exists("getLocalRouter")) {
     }
 }
 
+if (!function_exists("lang")) {
+    /**
+     * 翻译文本：当前语言=zh-cn 时零开销直返；miss 自动收集并回原文
+     */
+    function lang(?string $text, string $scene = "api"): string
+    {
+        if ($text === null || $text === "") {
+            return (string)$text;
+        }
+        return \Kernel\Util\Lang::trans($text, $scene);
+    }
+}
+
+if (!function_exists("t")) {
+    /**
+     * 模板翻译函数：#{t("中文")}
+     */
+    function t(?string $text): string
+    {
+        return lang($text, "tpl");
+    }
+}
+
+if (!function_exists("active")) {
+    /**
+     * 菜单高亮：按路由前缀匹配，替代模板里的中文 $title 比较（国际化前置改造）。
+     * $title 现在会被翻译，再拿它跟中文字面量比较，换语言后高亮就全失效了。
+     *
+     * @param string|string[] $prefix 路由前缀（如 /user/cash）；传数组表示任一命中即高亮，
+     *                                用于一个入口聚合多个页面的场景（底部导航的「经营」「钱包」等）
+     * @param string $class 命中时输出的内容，默认 active；各主题类名不同可自行传入
+     */
+    function active(string|array $prefix, string $class = "active"): string
+    {
+        $router = (string)getLocalRouter();
+        foreach ((array)$prefix as $item) {
+            if (str_starts_with($router, (string)$item)) {
+                return $class;
+            }
+        }
+        return "";
+    }
+}
+
+if (!function_exists("lang_dict_script")) {
+    /**
+     * 非源语言时输出字典脚本标签：URL 带版本号，浏览器 immutable 强缓存
+     */
+    function lang_dict_script(): string
+    {
+        $lang = \Kernel\Util\Lang::get();
+        if ($lang === \Kernel\Util\Lang::SOURCE) {
+            return "";
+        }
+        return '<script src="/user/api/lang/dict?lang=' . $lang . '&v=' . \Kernel\Util\Lang::version() . '"></script>';
+    }
+}
+
+if (!function_exists("lang_code")) {
+    /**
+     * 当前语言的 BCP-47 代码，供 <html lang="…"> 使用。
+     * 站内一律小写存放（zh-cn / pt-br），这里把地区子标签还原成大写。
+     */
+    function lang_code(): string
+    {
+        return \Kernel\Util\Lang::tag(\Kernel\Util\Lang::get());
+    }
+}
+
+if (!function_exists("lang_menu")) {
+    /**
+     * 语言切换器数据源：#{foreach lang_menu() as $l} ... #{/foreach}
+     *
+     * 每项 code / name / short / active。只含站长当前启用的语言——
+     * 模板照着渲染就行，站长加语言、停用语言都不用再改模板。
+     *
+     * @return array<int, array{code:string,name:string,short:string,active:bool}>
+     */
+    function lang_menu(): array
+    {
+        return \Kernel\Util\Lang::menu();
+    }
+}
+
 if (!function_exists("feedback")) {
-    function feedback(string $value)
+    /**
+     * 统一错误出口。
+     *
+     * @param string $value 错误信息；"404 Not Found" 走标准找不到页面
+     * @param int $status 响应状态码：路由找不到是 404，其余未捕获异常是 500。
+     *                    此前一律隐式 200——错误页照常渲染，但搜索引擎会把不存在的
+     *                    地址当正常内容收录，健康检查与访问统计也永远看不到错误率。
+     * @return string
+     */
+    function feedback(string $value, int $status = 404)
     {
         if ($value != "404 Not Found") {
             debug($value);
         }
+
+        if (!headers_sent()) {
+            http_response_code($status);
+        }
+
+        $value = lang($value);
 
         if (!DEBUG) {
             return View::render("404.html", ["msg" => "404 Not Found"]);
@@ -236,7 +335,8 @@ if (!function_exists("hook")) {
     function hook(int $point, mixed &...$args)
     {
         $result = Plugin::hook($point, ...$args);
-        if ($result) {
+        //false 也是有效的决策结果（如 SMTP 钩子里表示“已处理但失败”），不能被当成空值吞掉
+        if ($result !== null && $result !== "" && $result !== []) {
             return $result;
         }
     }
@@ -254,6 +354,10 @@ if (!function_exists("debug")) {
     function debug(string $message): void
     {
         $path = BASE_PATH . '/runtime.log';
+        //滚动：每个 500 都会追加这里，无上限会被免登录高频请求打满磁盘。超过 20MB 就滚动一份(只留最近一份历史)。
+        if (@filesize($path) > 20 * 1024 * 1024) {
+            @rename($path, $path . '.1');
+        }
         file_put_contents($path, "[" . date("Y-m-d H:i:s", time()) . "]:" . $message . PHP_EOL, FILE_APPEND);
     }
 }

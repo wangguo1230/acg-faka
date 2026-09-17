@@ -1,21 +1,111 @@
 !function () {
-    let table, _createForms = [], _createSearchs = [];
+    let table, _createSearchs = [];
+    const namespace = '.mdTradeCardController';
+    let searchSkuRevision = 0;
+    let controllerActive = true;
+    const exportControllers = new Set();
+    const escapeHtml = value => $('<div>').text(String(value ?? '')).html();
 
-    // 通过动态表单 POST 触发文件下载（用于参数体积较大的场景，规避 GET URL 长度限制）
-    const postDownload = (action, params) => {
-        const $form = $('<form>', {method: 'POST', action: action, target: '_blank'});
-        for (const k in params) {
-            $form.append($('<input>', {type: 'hidden', name: k, value: params[k]}));
-        }
-        $form.appendTo('body').submit().remove();
+    if (typeof window.__mdTradeCardDestroy === 'function') window.__mdTradeCardDestroy();
+
+    const confirmCardDelete = (list, done) => {
+        util.post('/admin/api/card/deleteImpact', {list: list}, res => {
+            if (!controllerActive) return;
+            const impact = res.data || {};
+            const cardCount = Number(impact.card_count || list.length);
+            const deletableCount = Number(impact.deletable_count ?? cardCount);
+            const blockedCount = Number(impact.blocked_count || 0);
+            if (deletableCount < 1) {
+                message.alert(
+                    `${i18n('所选')} ${cardCount} ${i18n('张卡密仍被未支付订单预选占用，暂不能删除；请先处理对应订单。')}`,
+                    'warning'
+                );
+                return;
+            }
+            const skipped = blockedCount > 0
+                ? `<br><br>${i18n('另有')} <b>${blockedCount} ${i18n('张')}</b>${i18n('仍被未支付订单预选占用，本次会自动跳过。')}`
+                : '';
+            message.ask(
+                `${i18n('将永久删除')} <b>${deletableCount} ${i18n('张卡密')}</b>，${i18n('其中包含')} ${Number(impact.sold_count || 0)} ${i18n('张已售卡密、')}${Number(impact.locked_count || 0)} ${i18n('张锁定卡密、')}${Number(impact.linked_count || 0)} ${i18n('张已关联订单卡密。')}<br><br>${i18n('已售卡密的发货内容仍保留在订单中；卡密记录删除后无法恢复。')}${skipped}`,
+                () => controllerActive && done(),
+                i18n('确认永久删除卡密'),
+                i18n('确认删除')
+            );
+        });
     };
-
+    const showCardDeleteResult = res => {
+        const deletedCount = Number(res.data?.deleted_count ?? res.data?.count ?? 0);
+        const skippedCount = Number(res.data?.skipped_count || 0);
+        message.success(
+            skippedCount > 0
+                ? `${i18n('删除完成：成功')} ${deletedCount} ${i18n('张，跳过')} ${skippedCount} ${i18n('张未支付订单占用卡密')}`
+                : `${i18n('已删除')} ${deletedCount} ${i18n('张卡密')}`
+        );
+    };
+    const formBody = payload => {
+        const body = new URLSearchParams();
+        Object.keys(payload || {}).forEach(key => {
+            const value = payload[key];
+            if (Array.isArray(value)) {
+                value.forEach(item => body.append(`${key}[]`, item));
+                return;
+            }
+            if (value !== undefined && value !== null) body.append(key, value);
+        });
+        return body.toString();
+    };
+    const postExportRequest = async (url, payload) => {
+        const requestController = new AbortController();
+        exportControllers.add(requestController);
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+                body: formBody(payload),
+                signal: requestController.signal
+            });
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                const json = await response.json();
+                if (!response.ok || json.code !== 200) throw new Error(json.msg || i18n('请求失败'));
+                return {json: json};
+            }
+            if (!response.ok) throw new Error(i18n('服务器无法完成卡密导出'));
+            return {blob: await response.blob()};
+        } finally {
+            exportControllers.delete(requestController);
+        }
+    };
+    const downloadCardExport = async (payload, count) => {
+        Loading.show();
+        try {
+            const result = await postExportRequest('/admin/api/card/export', payload);
+            if (!controllerActive) return;
+            if (!result.blob) throw new Error(i18n('服务器没有返回导出文件'));
+            const url = URL.createObjectURL(result.blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${i18n('卡密导出')}-${count}-${new Date().toISOString().slice(0, 10)}.txt`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            message.success(`${i18n('已安全导出')} ${count} ${i18n('张卡密')}`);
+        } catch (error) {
+            if (controllerActive && error?.name !== 'AbortError') message.alert(error.message || i18n('导出失败'), 'error');
+        } finally {
+            Loading.hide();
+        }
+    };
     const uploadCard = () => {
+        let skuRevision = 0;
+        const createForms = [];
         component.popup({
             submit: '/admin/api/card/save',
             tab: [
                 {
-                    name: util.icon("fa-duotone fa-regular fa-folder-arrow-up") + " 上传卡密",
+                    name: util.icon("fa-duotone fa-regular fa-folder-arrow-up") + i18n(" 上传卡密"),
                     form: [
                         {
                             title: "选择商品",
@@ -24,7 +114,9 @@
                             dict: "commodity->owner=0 and delivery_way=0 and (shared_id is null or shared_id=0),id,name",
                             placeholder: "请选择商品",
                             search: true,
+                            required: true,
                             change: (_, __) => {
+                                const revision = ++skuRevision;
                                 _.setRadio("race_get_mode", 0, true);
                                 _.setInput("race_input", "");
 
@@ -32,9 +124,11 @@
                                 _.hide("race_input");
                                 _.clearComponent("race");
                                 _.hide("race_get_mode");
-                                _createForms.forEach(k => _.removeForm(k));
+                                createForms.forEach(k => _.removeForm(k));
+                                createForms.length = 0;
                                 if (__ > 0) {
                                     util.get(`/admin/api/card/sku?commodityId=${__}`, data => {
+                                        if (!controllerActive || _.isDestroyed || revision !== skuRevision) return;
                                         if (!util.isEmptyOrNotJson(data?.category)) {
                                             let i = 0;
                                             for (const cKey in data.category) {
@@ -56,7 +150,7 @@
                                                     type: "radio",
                                                     dict: dict
                                                 }, "race", "after");
-                                                _createForms.push(`sku-${sKey}`);
+                                                createForms.push(`sku-${sKey}`);
                                             }
                                         }
                                     });
@@ -123,8 +217,8 @@
                             type: "custom",
                             complete: (form, dom) => {
                                 dom.html(`<div class="uc-cardtip">
-          <p>一行一个库存卡密，内容随意。买家购买后直接获得该行内容。</p>
-          <div class="uc-cardtip__label">示例</div>
+          <p>${i18n('一行一个库存卡密，内容随意。买家购买后直接获得该行内容。')}</p>
+          <div class="uc-cardtip__label">${i18n('示例')}</div>
           <pre class="uc-cardtip__code">ABCDEF-GHIJK-LMNOP
 VIP-2025-0821-XYZ</pre>
         </div>`);
@@ -137,18 +231,18 @@ VIP-2025-0821-XYZ</pre>
                             type: "custom",
                             complete: (form, dom) => {
                                 dom.html(`<div class="uc-cardtip">
-          <p>一行一个，必须使用 <code>║</code> 分隔，结构为：<b>卡密本体 ║ 预告信息 ║ 自选加价金额(可选) ║ 自选加价成本(可选)</b></p>
+          <p>${i18n('一行一个，必须使用')} <code>║</code> ${i18n('分隔，结构为：')}<b>${i18n('卡密本体')} ║ ${i18n('预告信息')} ║ ${i18n('自选加价金额')}(${i18n('可选')}) ║ ${i18n('自选加价成本')}(${i18n('可选')})</b></p>
           <ul class="uc-cardtip__legend">
-            <li><span class="a-badge a-badge-dark">卡密本体</span><span>买家付款后实际获得的完整内容</span></li>
-            <li><span class="a-badge a-badge-success">预告信息</span><span>买家下单时可见，用于自选</span></li>
-            <li><span class="a-badge a-badge-warning">自选加价金额</span><span>选填，不写默认为 0</span></li>
-            <li><span class="a-badge a-badge-primary">自选加价成本</span><span>选填，不写默认为 0</span></li>
+            <li><span class="a-badge a-badge-dark">${i18n('卡密本体')}</span><span>${i18n('买家付款后实际获得的完整内容')}</span></li>
+            <li><span class="a-badge a-badge-success">${i18n('预告信息')}</span><span>${i18n('买家下单时可见，用于自选')}</span></li>
+            <li><span class="a-badge a-badge-warning">${i18n('自选加价金额')}</span><span>${i18n('选填，不写默认为')} 0</span></li>
+            <li><span class="a-badge a-badge-primary">${i18n('自选加价成本')}</span><span>${i18n('选填，不写默认为')} 0</span></li>
           </ul>
-          <div class="uc-cardtip__label">示例</div>
-          <pre class="uc-cardtip__code">账号:testname--密码:testpassword123║大区:神境之地--等级:100║5.5║2.5
-ACC_US_12M_9F2K-7QPA-88XZ║地区:美区·时长:12个月║20║8
-ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
-          <div class="uc-cardtip__warn"><span class="material-icons-outlined">warning_amber</span><span>必须使用特殊符号 <strong>║</strong>（U+2551），不要用普通竖线 |</span></div>
+          <div class="uc-cardtip__label">${i18n('示例')}</div>
+          <pre class="uc-cardtip__code">${i18n('账号')}:testname--${i18n('密码')}:testpassword123║${i18n('大区')}:${i18n('神境之地')}--${i18n('等级')}:100║5.5║2.5
+ACC_US_12M_9F2K-7QPA-88XZ║${i18n('地区')}:${i18n('美区')}·${i18n('时长')}:12${i18n('个月')}║20║8
+ACC_JP_6M_0KLD-22MM-PP31║${i18n('地区')}:${i18n('日区')}·${i18n('时长')}:6${i18n('个月')}</pre>
+          <div class="uc-cardtip__warn"><span class="material-icons-outlined">warning_amber</span><span>${i18n('必须使用特殊符号')} <strong>║</strong>（U+2551），${i18n('不要用普通竖线')} |</span></div>
         </div>`);
                             }
                         },
@@ -157,6 +251,8 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
                             name: "secret",
                             type: "textarea",
                             placeholder: "卡密信息，一行一个",
+                            preserveLiteral: true,
+                            required: true,
                             height: 200
                         },
                         {
@@ -172,7 +268,7 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
             height: "auto",
             width: "680px",
             done: () => {
-                table.refresh();
+                if (controllerActive && table) table.refresh();
             }
         });
     }
@@ -224,7 +320,7 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
             height: "auto",
             width: "580px",
             done: () => {
-                table.refresh();
+                if (controllerActive && table) table.refresh();
             }
         });
     }
@@ -234,7 +330,33 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
     table.setColumns([
         {checkbox: true},
         {
-            field: 'secret', title: '卡密信息'
+            field: 'secret',
+            title: '卡密信息',
+            formatter: value => {
+                const secret = String(value ?? '');
+                if (!secret) return '-';
+                return `<span class="md-copyable-cell md-copyable-cell--clamp"><span class="md-copyable-cell__value">${escapeHtml(secret)}</span><button type="button" class="md-copyable-cell__copy" aria-label="${i18n('复制卡密')}" title="${i18n('复制卡密')}">${util.icon("fa-duotone fa-regular fa-copy")}</button></span>`;
+            },
+            events: {
+                'click .md-copyable-cell__copy': (event, value) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const secret = String(value ?? '');
+                    if (!secret) {
+                        message.error('卡密为空，无法复制');
+                        return;
+                    }
+                    util.copyTextToClipboard(
+                        secret,
+                        () => message.success('卡密已复制'),
+                        () => message.error('卡密复制失败')
+                    );
+                },
+                'dblclick .md-copyable-cell__copy': event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+            }
         },
         {
             field: 'draft', title: '预告内容'
@@ -244,8 +366,8 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
                 const premium = parseFloat(__.draft_premium) || 0;
                 const cost = parseFloat(__.cost) || 0;
                 if (premium <= 0 && cost <= 0) return '-';
-                const fmt = v => '¥' + format.amountRemoveTrailingZeros(v);
-                return `<div class="md-pair"><div class="md-pair__row"><span class="md-pair__k">加价</span><span class="md-pair__v" style="color:var(--md-success);font-weight:600">${fmt(premium)}</span></div><div class="md-pair__row"><span class="md-pair__k">成本</span><span class="md-pair__v md-pair__v--muted">${fmt(cost)}</span></div></div>`;
+                const fmt = v => format.currencySymbol() + format.amountRemoveTrailingZeros(v);
+                return `<div class="md-pair"><div class="md-pair__row"><span class="md-pair__k">${i18n('加价')}</span><span class="md-pair__v" style="color:var(--md-success);font-weight:600">${fmt(premium)}</span></div><div class="md-pair__row"><span class="md-pair__k">${i18n('成本')}</span><span class="md-pair__v md-pair__v--muted">${fmt(cost)}</span></div></div>`;
             }
         }
         , {
@@ -254,7 +376,7 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
                 const cover = c.cover
                     ? `<img src="${c.cover}" class="md-commodity-cell__cover" alt="">`
                     : `<span class="md-commodity-cell__cover md-commodity-cell__cover--ph"><i class="fa-duotone fa-regular fa-image"></i></span>`;
-                const owner = (__.owner && __.owner.username) ? __.owner.username : '主站';
+                const owner = (__.owner && __.owner.username) ? __.owner.username : i18n('主站');
                 return `<div class="md-commodity-cell md-commodity-cell--sm">${cover}<div class="md-commodity-cell__text"><span class="md-commodity-cell__name">${c.name || ''}</span><span class="md-commodity-cell__sub">${owner}</span></div></div>`;
             }
         }
@@ -263,10 +385,10 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
                 const race = (__.race && __.race !== '-') ? __.race : '';
                 const hasSku = !util.isEmptyOrNotJson(__.sku);
                 if (!race && !hasSku) return '-';
-                let rows = `<div class="md-pair__row"><span class="md-pair__k">类别</span><span class="md-pair__v">${race || '-'}</span></div>`;
+                let rows = `<div class="md-pair__row"><span class="md-pair__k">${i18n('类别')}</span><span class="md-pair__v">${i18n(race) || '-'}</span></div>`;
                 if (hasSku) {
                     let badges = '';
-                    for (const x in __.sku) badges += format.badge(`${x}: ${__.sku[x]}`, "a-badge-info");
+                    for (const x in __.sku) badges += format.badge(`${i18n(x)}: ${i18n(__.sku[x])}`, "a-badge-info");
                     rows += `<div class="md-pair__row"><span class="md-pair__k">SKU</span><span class="md-pair__v">${format.badgeGroup(badges)}</span></div>`;
                 }
                 return `<div class="md-pair">${rows}</div>`;
@@ -276,8 +398,8 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
             field: 'create_time', title: '创建/出售时间', formatter: (_, __) => {
                 const sold = __.purchase_time
                     ? `<span class="md-pair__v">${__.purchase_time}</span>`
-                    : `<span class="md-pair__v md-pair__v--muted">未出售</span>`;
-                return `<div class="md-pair"><div class="md-pair__row"><span class="md-pair__k">创建</span><span class="md-pair__v">${__.create_time || '-'}</span></div><div class="md-pair__row"><span class="md-pair__k">出售</span>${sold}</div></div>`;
+                    : `<span class="md-pair__v md-pair__v--muted">${i18n('未出售')}</span>`;
+                return `<div class="md-pair"><div class="md-pair__row"><span class="md-pair__k">${i18n('创建')}</span><span class="md-pair__v">${__.create_time || '-'}</span></div><div class="md-pair__row"><span class="md-pair__k">${i18n('出售')}</span>${sold}</div></div>`;
             }
         }
         , {field: 'note', title: '备注信息'}
@@ -293,26 +415,30 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
                     icon: 'fa-duotone fa-regular fa-pen-to-square',
                     class: "text-success",
                     click: (event, value, row, index) => {
-                        modal(util.icon("fa-duotone fa-regular fa-pen-to-square me-1") + "修改卡密", row);
+                        modal(util.icon("fa-duotone fa-regular fa-pen-to-square me-1") + i18n("修改卡密"), row);
                     }
                 },
                 {
-                    icon: 'fa-duotone fa-regular fa-lock-keyhole',
-                    class: "text-primary",
+                    icon: 'fa-duotone fa-regular fa-lock-keyhole-open',
+                    class: "text-success",
+                    title: "锁定",
                     show: _ => _.status == 0,
                     click: (event, value, row, index) => {
-                        util.post('/admin/api/card/edit', {id: row.id, status: 2}, res => {
-                            message.success(`【${row.secret}】已锁定`);
+                        util.post('/admin/api/card/lock', {list: [row.id]}, res => {
+                            if (!controllerActive || !table) return;
+                            message.success(`【${row.secret}】${i18n('已锁定')}`);
                             table.refresh();
                         });
                     }
                 }, {
-                    icon: 'fa-duotone fa-regular fa-lock-keyhole-open',
-                    class: "text-success",
+                    icon: 'fa-duotone fa-regular fa-lock-keyhole',
+                    class: "text-warning",
+                    title: "解锁",
                     show: _ => _.status == 2,
                     click: (event, value, row, index) => {
-                        util.post('/admin/api/card/edit', {id: row.id, status: 0}, res => {
-                            message.success(`【${row.secret}】已解锁`);
+                        util.post('/admin/api/card/unlock', {list: [row.id]}, res => {
+                            if (!controllerActive || !table) return;
+                            message.success(`【${row.secret}】${i18n('已解锁')}`);
                             table.refresh();
                         });
                     }
@@ -321,9 +447,10 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
                     icon: 'fa-duotone fa-regular fa-trash-can',
                     class: "text-danger",
                     click: (event, value, row, index) => {
-                        message.ask("您正在进行删除卡密操作，此操作无法撤销！", () => {
+                        confirmCardDelete([row.id], () => {
                             util.post('/admin/api/card/del', {list: [row.id]}, res => {
-                                message.success("删除成功");
+                                if (!controllerActive || !table) return;
+                                showCardDeleteResult(res);
                                 table.refresh();
                             });
                         });
@@ -345,11 +472,14 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
             type: "select",
             dict: "commodity->owner=0 and delivery_way=0 and (shared_id is null or shared_id=0),id,name",
             change: (_, __) => {
+                const revision = ++searchSkuRevision;
                 _.hide("equal-race");
                 _.selectClearOption("equal-race");
                 _createSearchs.forEach(k => _.removeSearch(k));
+                _createSearchs.length = 0;
                 if (__ > 0) {
                     util.get(`/admin/api/card/sku?commodityId=${__}`, data => {
+                        if (!controllerActive || _.isDestroyed || revision !== searchSkuRevision) return;
                         if (!util.isEmptyOrNotJson(data?.category)) {
                             let i = 0;
                             for (const cKey in data.category) {
@@ -384,108 +514,119 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
     table.render();
 
 
-    $('.btn-app-create').click(function () {
+    $('.btn-app-create').off(namespace).on('click' + namespace, function () {
         uploadCard();
     });
 
 
-    $('.btn-app-del').click(() => {
+    $('.btn-app-del').off(namespace).on('click' + namespace, () => {
         let data = table.getSelectionIds();
         if (data.length == 0) {
-            layer.msg("请至少勾选1个卡密再进行操作！");
+            layer.msg(i18n("请至少勾选1个卡密再进行操作！"));
             return;
         }
-        message.ask("注意，删除卡密后无法恢复", () => {
+        confirmCardDelete(data, () => {
             util.post("/admin/api/card/del", {list: data}, res => {
-                message.success("删除成功")
+                if (!controllerActive || !table) return;
+                showCardDeleteResult(res);
                 table.refresh();
             });
         });
     });
 
-    $('.btn-app-lock').click(() => {
+    $('.btn-app-lock').off(namespace).on('click' + namespace, () => {
         let data = table.getSelectionIds();
         if (data.length == 0) {
-            layer.msg("请至少勾选1个卡密进行操作！");
+            layer.msg(i18n("请至少勾选1个卡密进行操作！"));
             return;
         }
 
-        message.ask("您确定要锁定选中的卡密吗？", () => {
+        message.ask(`${i18n('确认锁定选中的')} <b>${data.length} ${i18n('张卡密')}</b>${i18n('吗？锁定后未出售卡密将暂时不可用。')}`, () => {
             util.post("/admin/api/card/lock", {list: data}, res => {
-                message.success("全部锁定成功")
+                if (!controllerActive || !table) return;
+                message.success(`${i18n('已锁定')} ${Number(res.data?.count || 0)} ${i18n('张卡密')}`)
                 table.refresh();
             });
-        });
+        }, i18n('确认锁定卡密'), i18n('确认锁定'));
     });
 
-    $('.btn-app-unlock').click(() => {
+    $('.btn-app-unlock').off(namespace).on('click' + namespace, () => {
         let data = table.getSelectionIds();
         if (data.length == 0) {
-            layer.msg("请至少勾选1个卡密进行操作！");
+            layer.msg(i18n("请至少勾选1个卡密进行操作！"));
             return;
         }
-        message.ask("您确定要锁定选中的卡密吗？", () => {
+        message.ask(`${i18n('确认解锁选中的')} <b>${data.length} ${i18n('张卡密')}</b>${i18n('吗？解锁后卡密将恢复可用。')}`, () => {
             util.post("/admin/api/card/unlock", {list: data}, res => {
-                message.success("全部解锁成功")
+                if (!controllerActive || !table) return;
+                message.success(`${i18n('已解锁')} ${Number(res.data?.count || 0)} ${i18n('张卡密')}`)
                 table.refresh();
             });
-        });
+        }, i18n('确认解锁卡密'), i18n('确认解锁'));
     });
 
 
-    $('.btn-app-sell').click(() => {
-        let data = table.getSelectionIds();
+    $('.btn-app-sell').off(namespace).on('click' + namespace, () => {
+        let selected = table.getSelections();
+        let data = selected.map(item => item.id);
         if (data.length == 0) {
-            layer.msg("请至少勾选1个卡密进行操作！");
+            layer.msg(i18n("请至少勾选1个卡密进行操作！"));
             return;
         }
-        message.ask("您确定要手动出售选中的卡密吗？", () => {
+        const invalid = selected.filter(item => Number(item.status) !== 0 || Number(item.order_id || 0) > 0);
+        if (invalid.length > 0) {
+            message.warning(`${i18n('选中的卡密中有')} ${invalid.length} ${i18n('张不是')}“${i18n('未出售')}”${i18n('状态；锁定卡密请先解锁，已售卡密不能重复处理')}`);
+            return;
+        }
+        message.ask(`${i18n('将把选中的')} <b>${data.length} ${i18n('张未出售卡密')}</b>${i18n('永久标记为已售。')}<br><br>${i18n('此操作不会生成真实订单、会立即移出可售库存，而且没有恢复入口；锁定卡密必须先显式解锁。')}`, () => {
             util.post("/admin/api/card/sell", {list: data}, res => {
-                message.success("全部状态修改成功")
+                if (!controllerActive || !table) return;
+                message.success(`${i18n('已标记')} ${Number(res.data?.count || data.length)} ${i18n('张卡密为已售')}`)
                 table.refresh();
             });
-        });
+        }, i18n('确认标记卡密已售'), i18n('确认标记已售'));
     });
 
 
-    // selectedIds 为空数组时按筛选条件导出；非空时仅导出勾选的卡密
-    const exportPopup = (selectedIds = []) => {
-        const bySelected = selectedIds.length > 0;
+    $('.btn-app-export, .btn-app-export-selected').off(namespace).on('click' + namespace, function () {
+        const selectedIds = $(this).hasClass('btn-app-export-selected') ? table.getSelectionIds() : null;
+        if (selectedIds !== null && selectedIds.length === 0) {
+            message.warning(i18n('请至少勾选1个卡密再进行操作！'));
+            return;
+        }
         component.popup({
             tab: [
                 {
-                    name: util.icon("fa-duotone fa-regular fa-file-export") + (bySelected ? " 导出选中卡密" : " 导出卡密"),
+                    name: util.icon("fa-duotone fa-regular fa-file-export") + i18n(" 导出卡密"),
                     form: [
                         {
                             name: "custom",
                             type: "custom",
                             complete: (obj, dom) => {
-                                dom.html(bySelected
-                                    ? `<div style="margin-bottom: 25px;color: #27bd27;font-weight: bolder;">将导出您勾选的 ${selectedIds.length} 条卡密（忽略查询筛选条件）。如果您填写了导出数量，将仅导出其中指定数量的卡密。</div>`
-                                    : '<div style="margin-bottom: 25px;color: #27bd27;font-weight: bolder;">导出程序将根据您通过查询功能筛选出的卡密进行导出。如果您填写了导出数量，将导出指定数量的卡密；如果您未填写数量，则将导出您筛选的全部卡密。</div>');
+                                dom.closest("form").addClass("md-card-export-form");
+                                dom.html(selectedIds !== null ? '<div class="alert alert-warning mb-4">' + i18n('按勾选卡密导出，忽略查询筛选条件；单次最多 500 张，下载前将预览数量。') + '</div>' : '<div class="alert alert-warning mb-4"><b>' + i18n('敏感数据导出') + '</b><br>' + i18n('系统只会按当前查询条件导出，并在下载前显示精确命中数量。筛选条件和卡密内容使用 POST 传输，不会写入浏览器地址与历史记录。单次最多 5000 张。') + '</div>');
                             }
                         },
                         {
                             title: "导出数量",
                             name: "export_num",
-                            type: "input",
-                            placeholder: "导出数量，填写0或不填表示全部导出。"
+                            type: "number",
+                            placeholder: "0 或留空表示当前筛选范围内全部导出（最多 5000 张）"
                         }, {
                             title: "导出备注",
                             name: "note",
                             type: "input",
                             placeholder: "导出备注",
-                            tips: "导出时，自动修改卡密备注，后期方便可查询导出了那些卡密，留空则不修改"
+                            tips: "填写后会批量修改本次导出卡密的备注；留空则保持原备注"
                         },
                         {
                             title: "导出后执行",
                             name: "export_status",
                             type: "radio",
                             dict: [
-                                {id: 0, name: "不执行任何操作"},
-                                {id: 1, name: "锁定导出的卡密"},
-                                {id: 2, name: "删除导出的卡密（高危）"},
-                                {id: 3, name: "将卡密状态改【已售】"},
+                                {id: 0, name: "仅下载，不改变状态"},
+                                {id: 1, name: "下载后锁定未出售卡密"},
+                                {id: 3, name: "下载后永久标记为已售（高危）"},
                             ]
                         }
                     ]
@@ -494,52 +635,75 @@ ACC_JP_6M_0KLD-22MM-PP31║地区:日区·时长:6个月</pre>
             height: "auto",
             width: "480px",
             assign: {},
-            confirmText: "开始导出",
+            confirmText: i18n("开始导出"),
             maxmin: false,
             autoPosition: true,
-            submit: (data, index) => {
-                let triggerDownload;
-                if (bySelected) {
-                    // 选中导出：用 POST 表单提交，规避大量勾选 id 导致的 URL 超长
-                    let params = Object.assign({ids: selectedIds.join(",")}, data);
-                    triggerDownload = () => postDownload("/admin/api/card/export", params);
-                } else {
-                    // 筛选导出：参数量小，沿用 GET 下载
-                    let searchData = table.getSearchData();
-                    let state = table.getState();
-                    let params = Object.assign(searchData, data);
-                    params["equal-" + state.field] = state.value;
-                    let url = "/admin/api/card/export?" + util.objectToQueryString(params);
-                    triggerDownload = () => window.open(url);
+            submit: async (data, index) => {
+                const exportNum = data.export_num === '' ? 0 : Number(data.export_num);
+                if (!Number.isInteger(exportNum) || exportNum < 0 || exportNum > 5000) {
+                    message.warning('导出数量必须是 0 到 5000 的整数');
+                    return;
+                }
+                const payload = selectedIds !== null
+                    ? Object.assign({}, data, {ids: selectedIds})
+                    : Object.assign({}, table.getSearchData(), data);
+                const state = table.getState();
+                if (selectedIds === null && state.field && String(state.value ?? '') !== '') {
+                    payload[`equal-${state.field}`] = state.value;
                 }
 
-                layer.close(index);
-
-                if (data.export_status == 2) {
-                    message.dangerPrompt("您正在执行高风险的卡密导出操作，需要注意此操作无法恢复数据。如果您只是希望卡密不再可见，我们建议您选择锁定导出的卡密。", "我确认导出并删除卡密", () => {
-                        triggerDownload();
-                    });
-                } else {
-                    triggerDownload();
+                Loading.show();
+                try {
+                    const preview = await postExportRequest('/admin/api/card/exportImpact', payload);
+                    if (!controllerActive) return;
+                    const impact = preview.json?.data || {};
+                    const scope = impact.has_filter
+                        ? i18n(selectedIds !== null ? '当前勾选卡密' : '当前筛选条件')
+                        : '<span style="color:#d32f2f;font-weight:700">' + i18n('未设置筛选条件') + '</span>';
+                    const statusText = Number(impact.export_status) === 1
+                        ? i18n('下载后锁定其中未出售卡密')
+                        : (Number(impact.export_status) === 3 ? i18n('下载后永久标记全部卡密为已售') : i18n('仅下载，不改变状态'));
+                    const noteText = impact.will_change_note
+                        ? `${i18n('并将备注改为')}“${escapeHtml(data.note)}”`
+                        : i18n('保持原备注');
+                    const detail = `${scope}${i18n('共命中')} ${Number(impact.total || 0)} ${i18n('张，本次导出')} <b>${Number(impact.count || 0)} ${i18n('张')}</b><br><br>${i18n('未出售')} ${Number(impact.available_count || 0)} ${i18n('张、已售')} ${Number(impact.sold_count || 0)} ${i18n('张、锁定')} ${Number(impact.locked_count || 0)} ${i18n('张')}<br><br>${statusText}；${noteText}。`;
+                    const proceed = () => {
+                        if (!controllerActive) return;
+                        layer.close(index);
+                        downloadCardExport(payload, Number(impact.count || 0));
+                    };
+                    if (Number(impact.export_status) === 3) {
+                        const phrase = `${i18n('确认标记已售并导出')}${Number(impact.count || 0)}${i18n('张卡密')}`;
+                        message.dangerPrompt(`${detail}<br><br>${i18n('标记已售不会生成真实订单，且没有恢复入口。')}`, phrase, proceed);
+                    } else {
+                        message.ask(detail, proceed, i18n('确认导出敏感卡密'), i18n('确认下载'));
+                    }
+                } catch (error) {
+                    if (controllerActive && error?.name !== 'AbortError') message.alert(error.message || i18n('无法预览导出范围'), 'error');
+                } finally {
+                    Loading.hide();
                 }
             },
         });
-    };
-
-
-    $('.btn-app-export').click(function () {
-        exportPopup();
     });
 
+    function destroy() {
+        if (!controllerActive) return;
+        controllerActive = false;
+        searchSkuRevision += 1;
+        _createSearchs.length = 0;
+        exportControllers.forEach(requestController => requestController.abort());
+        exportControllers.clear();
+        $('.btn-app-create, .btn-app-del, .btn-app-lock, .btn-app-unlock, .btn-app-sell, .btn-app-export, .btn-app-export-selected').off(namespace);
+        $(document).off('pjax:beforeReplace' + namespace);
+        if (table && !table.isDestroyed && typeof table.destroy === 'function') table.destroy();
+        table = null;
+        if (typeof Swal !== 'undefined') Swal.close();
+        if (typeof Loading !== 'undefined') Loading.hide();
+        if (window.__mdTradeCardDestroy === destroy) delete window.__mdTradeCardDestroy;
+    }
 
-    $('.btn-app-export-selected').click(function () {
-        let ids = table.getSelectionIds();
-        if (ids.length == 0) {
-            layer.msg("请至少勾选1个卡密再进行导出！");
-            return;
-        }
-        exportPopup(ids);
-    });
-
+    window.__mdTradeCardDestroy = destroy;
+    $(document).off('pjax:beforeReplace' + namespace).one('pjax:beforeReplace' + namespace, destroy);
 
 }();

@@ -1,13 +1,4 @@
-/*
- * EditorV2 — reusable self-built Markdown editor (CodeMirror source + marked live
- * preview + preview toggle ⇄ ACE HTML-source mode). Storage stays HTML: a hidden
- * <textarea class="text-container" name="..."> always holds the rendered HTML, so
- * save/buyer-render/DB are unchanged. Used by the form widget (type:"editorv2") and
- * standalone editors (e.g. the 店铺公告 notice on the settings page).
- *
- * Globals used at runtime: jQuery ($), i18n, layer, ace, CodeMirror, marked,
- * TurndownService, localStorage.
- */
+
 (function (global) {
     let ev2Seq = 0;
 
@@ -25,9 +16,6 @@
             + tb('table', 'fa-table', '表格');
     }
 
-    // Build the editor markup. The hidden textarea is left EMPTY here (register() sets
-    // its value via .val(), which is HTML-injection-safe) — never interpolate stored
-    // HTML into innerHTML.
     function buildHtml(opt) {
         const name = opt.name;
         const ph = opt.placeholder ?? '';
@@ -45,11 +33,9 @@
             + `</div>`;
     }
 
-    // Wire an existing .ev2-editor. rootEl may be the .ev2-editor itself or an ancestor.
-    // opt: { name, uploadUrl, height, value (initial HTML), onChange(html),
-    //        allowHtmlSource (default true), allowRawHtml (default true) }
     function register(rootEl, opt) {
         opt = opt || {};
+        let destroyed = false;
         const $root = $(rootEl);
         const $editor = $root.hasClass('ev2-editor') ? $root : $root.find('.ev2-editor').first();
         const $textarea = $editor.find('.text-container');
@@ -65,7 +51,6 @@
         const uploadUrl = opt.uploadUrl || '/admin/api/upload/send';
         const allowRawHtml = opt.allowRawHtml !== false;
 
-        // --- converters (store stays HTML: markdown is only the authoring layer) ---
         const escapeHtml = (value) => String(value ?? '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -185,7 +170,7 @@
         let layoutReady = !popupLayer;
         let layoutTimer = null;
         const refreshEditor = () => {
-            if (cmHost.isConnected) cm.refresh();
+            if (!destroyed && cmHost.isConnected) cm.refresh();
         };
         const queueRefresh = () => {
             if (!layoutReady) return;
@@ -225,6 +210,8 @@
         // --- live render: markdown -> HTML -> hidden textarea + preview (debounced) ---
         let rid;
         const render = () => {
+            if (destroyed) return;
+            if ($editor.attr('data-mode') === 'html') return;
             const src = cm.getValue();
             const html = src.trim() === '' ? '' : md2html(src);
             $textarea.val(html);
@@ -232,10 +219,11 @@
             togglePh();
             opt.onChange && opt.onChange(html);
         };
-        cm.on('change', () => {
+        const onMarkdownChange = () => {
             clearTimeout(rid);
             rid = setTimeout(render, 120);
-        });
+        };
+        cm.on('change', onMarkdownChange);
 
         // --- toolbar ---
         $editor.find('.ev2-tb').on('click', function () {
@@ -249,14 +237,17 @@
         });
 
         // --- image upload (reuse the same endpoint + response shape as the old editor) ---
+        const uploadRequests = new Set();
         const uploadImage = (file) => {
-            if (!file) return;
+            if (!file || destroyed) return;
             const fd = new FormData();
             fd.append('file', file);
-            $.ajax({
+            const request = $.ajax({
                 url: uploadUrl + '?mime=image', type: 'POST', data: fd,
                 processData: false, contentType: false,
                 success: (res) => {
+                    uploadRequests.delete(request);
+                    if (destroyed) return;
                     if (res.code !== 200) {
                         layer.msg(res.msg);
                         return;
@@ -264,14 +255,18 @@
                     cm.replaceSelection(`![](${res.data.url})`);
                     cm.focus();
                 },
-                error: () => layer.msg(i18n('图片上传失败，文件可能过大'))
+                error: (xhr, status) => {
+                    uploadRequests.delete(request);
+                    if (!destroyed && status !== 'abort') layer.msg(i18n('图片上传失败，文件可能过大'));
+                }
             });
+            uploadRequests.add(request);
         };
         $imgInput.on('change', function () {
             uploadImage(this.files && this.files[0]);
             this.value = '';
         });
-        cm.on('paste', (cmi, e) => {
+        const onPaste = (cmi, e) => {
             const items = e.clipboardData && e.clipboardData.items;
             if (!items) return;
             for (let i = 0; i < items.length; i++) {
@@ -280,14 +275,16 @@
                     uploadImage(items[i].getAsFile());
                 }
             }
-        });
-        cm.on('drop', (cmi, e) => {
+        };
+        const onDrop = (cmi, e) => {
             const files = e.dataTransfer && e.dataTransfer.files;
             if (files && files.length && files[0].type && files[0].type.indexOf('image') === 0) {
                 e.preventDefault();
                 uploadImage(files[0]);
             }
-        });
+        };
+        cm.on('paste', onPaste);
+        cm.on('drop', onDrop);
 
         // --- preview on/off toggle (persisted) ---
         const applyPreview = (on) => {
@@ -343,25 +340,62 @@
         });
 
         // --- CodeMirror mis-measures while hidden (layui tab / collapsed panel): refresh on reveal ---
+        let intersectionObserver = null;
         try {
-            const io = new IntersectionObserver((entries) => {
+            intersectionObserver = new IntersectionObserver((entries) => {
                 entries.forEach((en) => {
                     if (en.isIntersecting) queueRefresh();
                 });
             });
-            io.observe(cmHost);
+            intersectionObserver.observe(cmHost);
         } catch (e) {}
+
+        const destroy = () => {
+            if (destroyed) return;
+            destroyed = true;
+            clearTimeout(rid);
+            if (layoutTimer !== null) {
+                clearTimeout(layoutTimer);
+                layoutTimer = null;
+            }
+            if (intersectionObserver) {
+                intersectionObserver.disconnect();
+                intersectionObserver = null;
+            }
+            uploadRequests.forEach((request) => {
+                if (request && request.readyState !== 4) {
+                    try { request.abort(); } catch (e) {}
+                }
+            });
+            uploadRequests.clear();
+            try { cm.off('change', onMarkdownChange); } catch (e) {}
+            try { cm.off('paste', onPaste); } catch (e) {}
+            try { cm.off('drop', onDrop); } catch (e) {}
+            if (aceEditor) {
+                try { aceEditor.destroy(); } catch (e) {}
+                aceEditor = null;
+            }
+            $editor.find('*').addBack().stop(true, true).off();
+            const wrapper = cm.getWrapperElement && cm.getWrapperElement();
+            if (wrapper && wrapper.parentNode) wrapper.parentNode.removeChild(wrapper);
+        };
 
         return {
             cm: cm,
             // Flush the 120ms preview debounce before a form submits. This keeps the
             // hidden canonical HTML in sync even when the user types and immediately clicks.
             getHTML: () => {
+                if (destroyed) return $textarea.val();
                 clearTimeout(rid);
+                if (aceEditor) {
+                    $textarea.val(aceEditor.getValue());
+                    return $textarea.val();
+                }
                 render();
                 return $textarea.val();
             },
-            setHTML: (h) => { cm.setValue((h && normalizeDefault(h)) ? html2md(h) : ''); }
+            setHTML: (h) => { if (!destroyed) cm.setValue((h && normalizeDefault(h)) ? html2md(h) : ''); },
+            destroy: destroy
         };
     }
 

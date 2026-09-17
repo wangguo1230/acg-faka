@@ -3,31 +3,17 @@ declare(strict_types=1);
 
 namespace App\Controller\Base\View;
 
-
 use App\Model\Business;
 use App\Model\Config;
 use App\Util\Client;
+use App\Util\RichHtml;
 use App\Util\Theme;
 use Kernel\Exception\JSONException;
 use Kernel\Exception\ViewException;
 use Kernel\Util\View;
 
-/**
- * Class UserPlugin
- * @package App\Controller\Base\View
- */
 abstract class UserPlugin extends \App\Controller\Base\User
 {
-    /**
-     * @param string|null $title
-     * @param string $template
-     * @param array $data
-     * @param bool $controller
-     * @return string
-     * @throws ViewException
-     * @throws JSONException
-     * @throws \ReflectionException
-     */
     protected function render(?string $title, string $template, array $data = [], bool $controller = false): string
     {
         try {
@@ -46,13 +32,14 @@ abstract class UserPlugin extends \App\Controller\Base\User
             if ($business) {
                 $data['config']['shop_name'] = $business->shop_name;
                 $data['config']['title'] = $business->title;
-                $data['config']['notice'] = $business->notice;
+                $data['config']['notice'] = RichHtml::sanitize((string)$business->notice, false);
                 $data['config']['service_url'] = $business->service_url != "" ? $business->service_url : "https://wpa.qq.com/msgrd?v=1&uin={$business->service_qq}";
             }
             $user = $this->getUser();
             if ($user) {
                 $data['user'] = $user;
-                $data['group'] = $this->getUserGroup()->toArray();
+
+                $data['group'] = $this->getUserGroup()?->toArray();
             }
             $data['setting'] = Theme::getConfig("Cartoon")["setting"];
             $data['default_view_path'] = BASE_PATH . '/app/View/User/Theme/Cartoon/';

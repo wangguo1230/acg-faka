@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 namespace App\Util;
 
+use Kernel\Waf\Filter;
+use Kernel\Waf\Firewall;
+
 /**
  * Class Str
  * @package App\Util
@@ -19,6 +22,42 @@ class Str
     public static function generatePassword(string $pass, string $salt): string
     {
         return sha1(md5(md5($pass) . md5($salt)));
+    }
+
+    /**
+     * 校验账号密码，兼容旧清洗管线时代的哈希（#833）
+     *
+     * 旧版 Firewall 会对已解码的输入再 urldecode 一次，并把裸 & 实体化成 &amp;，
+     * 含特殊字符的密码在当年注册/改密时哈希的是转义后的形态。管线修正后，
+     * 直接比对会失败，这里用旧管线重算一个候选值兜底，让老账号无缝登录。
+     *
+     * @param string $storedHash 库中的密码哈希
+     * @param string $salt 账号盐
+     * @param string $cleanInput 当前管线清洗后的输入（如 $_POST['password']）
+     * @param string|null $rawInput 未清洗的原始输入（Request::unsafePost），用于重放旧管线
+     * @return bool
+     */
+    public static function verifyPassword(string $storedHash, string $salt, string $cleanInput, ?string $rawInput = null): bool
+    {
+        if ($storedHash === '') {
+            return false;
+        }
+
+        if (hash_equals($storedHash, self::generatePassword($cleanInput, $salt))) {
+            return true;
+        }
+
+        if ($rawInput === null || $rawInput === '') {
+            return false;
+        }
+
+        //旧管线 = 旧版 xssKiller + 超全局的 STRING_UNSIGNED 过滤，两步都要重放
+        $firewall = Firewall::inst();
+        $legacy = $firewall->filterContent($firewall->xssKillerLegacy($rawInput), Filter::STRING_UNSIGNED);
+
+        return is_string($legacy)
+            && $legacy !== $cleanInput
+            && hash_equals($storedHash, self::generatePassword($legacy, $salt));
     }
 
     /**
@@ -73,7 +112,15 @@ class Str
      */
     public static function generateTradeNo()
     {
-        return mt_rand(100, 999) . date("ymdHis", time()) . mt_rand(100, 999);
+        //全随机 18 位（CSPRNG）。旧实现是 mt_rand(3)+明文时间戳(12)+mt_rand(3)：熵只有 ~19.3bit、
+        //且下单时间明文可读，配合匿名 order/state 可按时间窗枚举订单号→拉卡密。改为 random_int 生成，
+        //去掉时间戳、不再用非密码学的 mt_rand。仍是 18 位纯数字（兼容 ^\d{18}$ 匹配与支付网关回传），
+        //首位取 1-9 避免前导零；trade_no 有唯一索引，极小概率撞号时入库失败、上层照旧重试/报错。
+        $tradeNo = (string)random_int(1, 9);
+        for ($i = 0; $i < 17; $i++) {
+            $tradeNo .= (string)random_int(0, 9);
+        }
+        return $tradeNo;
     }
 
     /**

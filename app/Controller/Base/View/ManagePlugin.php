@@ -9,24 +9,13 @@ use Kernel\Exception\JSONException;
 use Kernel\Exception\ViewException;
 use Kernel\Util\View;
 
-/**
- * Class ManagePlugin
- * @package App\Controller\Base\View
- */
 abstract class ManagePlugin extends \App\Controller\Base\Manage
 {
-    /**
-     * @param string|null $title
-     * @param string $template
-     * @param array $data
-     * @param bool $controller
-     * @return string
-     * @throws ViewException
-     * @throws JSONException
-     */
     protected function render(?string $title, string $template, array $data = [], bool $controller = false): string
     {
         try {
+            require(BASE_PATH . "/app/View/Admin/Helper.php");
+
             $data['title'] = $title;
             $data['app']['version'] = \config("app")['version'];
 
@@ -53,6 +42,8 @@ abstract class ManagePlugin extends \App\Controller\Base\Manage
             }
             $data['manage_view_path'] = BASE_PATH . '/app/View/Admin/';
             $data['_store_initialize'] = file_exists(BASE_PATH . "/kernel/Plugin.php");
+
+            $data['_app_store_load_state'] = defined('_APP_STORE_LOAD_STATE') && \_APP_STORE_LOAD_STATE === true;
             return View::render($template, $data, BASE_PATH . "/app/Plugin/" . ($controller ? \Kernel\Util\Plugin::$currentControllerPluginName : \Kernel\Util\Plugin::$currentPluginName) . "/View");
         } catch (\SmartyException $e) {
             throw new ViewException($e->getMessage());

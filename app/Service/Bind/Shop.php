@@ -33,11 +33,6 @@ class Shop implements \App\Service\Shop
     #[Inject]
     private \App\Service\Order $order;
 
-    /**
-     * @param UserGroup|null $group
-     * @return array
-     * @throws RuntimeException
-     */
     public function getCategory(?UserGroup $group): array
     {
         $category = Category::query()->withCount(['children as commodity_count' => function (Builder $builder) {
@@ -45,18 +40,17 @@ class Shop implements \App\Service\Shop
         }])->where("status", 1)->orderBy("sort", "asc");
 
         $bus = Business::get();
-        $userCategoryMap = []; //自定义名称的MAP
+        $userCategoryMap = [];
         $master = true;
 
         if ($bus) {
             $master = false;
-            //商家
+
             if ($bus->master_display == 0) {
                 $category = $category->where("owner", $bus->user_id);
             } else {
-                //查询出所有不显示的ID
                 $userCategory = UserCategory::query()->where("user_id", $bus->user_id)->get();
-                //隐藏的分类ID
+
                 $hideCategory = [];
 
                 foreach ($userCategory as $userCate) {
@@ -70,9 +64,7 @@ class Shop implements \App\Service\Shop
                 $category = $category->whereNotIn("id", $hideCategory)->whereRaw("(`owner`=0 or `owner`={$bus->user_id})");
             }
         } else {
-            //主站
             if (Config::get("substation_display") == 1) {
-                //显示商家
                 $list = (array)json_decode(Config::get("substation_display_list"), true);
                 $let = "(`owner`=0 or ";
                 foreach ($list as $userId) {
@@ -84,11 +76,10 @@ class Shop implements \App\Service\Shop
                 $category = $category->where("owner", 0);
             }
         }
-        //拿到最终的分类数据
+
         $category = $category->get();
 
         foreach ($category as $index => $item) {
-
             $levelConfig = $item->getLevelConfig($group);
             if ($item->hide == 1 && (!$levelConfig || !isset($levelConfig['show']) || (int)$levelConfig['show'] != 1)) {
                 unset($category[$index]);
@@ -114,7 +105,8 @@ class Shop implements \App\Service\Shop
         if ($commodityRecommend == 1 && $master) {
             array_unshift($array, [
                 "id" => 'recommend',
-                "name" => Config::get("commodity_name"),
+
+                "name" => lang((string)Config::get("commodity_name"), "dyn"),
                 "sort" => 1,
                 "create_time" => "-",
                 "owner" => 0,
@@ -129,16 +121,9 @@ class Shop implements \App\Service\Shop
         return $array;
     }
 
-    /**
-     * @param int|string $commodityId
-     * @param User|null $user
-     * @param UserGroup|null $group
-     * @return array
-     * @throws JSONException
-     * @throws RuntimeException
-     */
     public function getItem(int|string $commodityId, ?User $user = null, ?UserGroup $group = null): array
     {
+        \App\Util\Schema::ensureCommodityTags();
 
         $commodity = Commodity::query()->with(['owner' => function (Relation $relation) {
             $relation->select(["id", "username", "avatar"]);
@@ -148,7 +133,8 @@ class Shop implements \App\Service\Shop
                 "status", "owner", "delivery_way", "contact_type", "password_status", "level_price",
                 "level_disable", "coupon", "shared_id", "shared_code", "shared_premium", "shared_premium_type", "seckill_status",
                 "seckill_start_time", "seckill_end_time", "draft_status", "draft_premium", "inventory_hidden",
-                "widget", "minimum", "maximum", "shared_sync", "config", "stock", "code", "shared_amount_sync", "shared_config_sync"])
+                "widget", "minimum", "maximum", "shared_sync", "config", "stock", "code", "shared_amount_sync", "shared_config_sync",
+                "tags"])
             ->withCount(['order as order_sold' => function (Builder $relation) {
                 $relation->where("delivery_status", 1);
             }]);
@@ -167,66 +153,37 @@ class Shop implements \App\Service\Shop
             throw new JSONException("该商品暂未上架");
         }
 
-        /**
-         * @var Shared $shared
-         */
         $shared = \App\Model\Shared::query()->find($commodity->shared_id);
 
         if ($shared) {
-            //远端同步
             if ($commodity->shared_sync == 1) {
-                /**
-                 * @var Commodity $new
-                 */
-                $new = Commodity::query()->find($commodity->id);
+                $this->shared->syncRemoteItem($commodity->id);
 
-                $remoteItem = $this->shared->item($shared, $new->shared_code);
-
-                $base = $this->shared->AdjustmentPrice(Ini::toConfig($remoteItem['config'] ?: []), (string)$remoteItem['price'], (string)$remoteItem['user_price'], $new->shared_premium_type, $new->shared_premium);
-
-                $_config = $remoteItem['config'] ?: [];
-
-                if (!empty($_config['sku'])) {
-                    $base['config']['sku_cost'] = $_config['sku'];
+                $fresh = Commodity::query()->find($commodity->id);
+                if ($fresh) {
+                    foreach ([
+                        'price', 'user_price', 'config', 'level_price',
+                        'draft_status', 'draft_premium', 'widget', 'stock',
+                    ] as $field) {
+                        $commodity->{$field} = $fresh->{$field};
+                    }
                 }
-
-                if (!empty($_config['category'])) {
-                    $base['config']['category_cost'] = $_config['category'];
-                }
-
-                if ($commodity->shared_amount_sync === 1) {
-                    $commodity->price = $new->price = $base['price'];
-                    $commodity->user_price = $new->user_price = $base['user_price'];
-                }
-
-
-                if ($commodity->shared_config_sync === 1) {
-                    $commodity->config = $new->config = Ini::toConfig($base['config']);
-                }
-
-                $commodity->draft_status = $new->draft_status = $remoteItem['draft_status'];
-                $commodity->draft_premium = $new->draft_premium = $remoteItem['draft_premium'] > 0 ? $this->shared->AdjustmentAmount($new->shared_premium_type, $new->shared_premium, $remoteItem['draft_premium']) : 0;
-                $commodity->seckill_status = $new->seckill_status = $remoteItem['seckill_status'];
-                $commodity->seckill_start_time = $new->seckill_start_time = $remoteItem['seckill_start_time'];
-                $commodity->seckill_end_time = $new->seckill_end_time = $remoteItem['seckill_end_time'];
-                $commodity->widget = $new->widget = is_array($remoteItem['widget']) ? json_encode($remoteItem['widget']) : $remoteItem['widget'];
-                $commodity->minimum = $new->minimum = $remoteItem['minimum'];
-                $commodity->maximum = $new->maximum = $remoteItem['maximum'];
-                $commodity->stock = $new->stock = $remoteItem['stock'];
-                $commodity->contact_type = $new->contact_type = $remoteItem['contact_type'];
-
-                $new->save();
             }
         } else if ($commodity->delivery_way == 0) {
             $commodity->stock = Card::query()->where("commodity_id", $commodity->id)->where("status", 0)->count();
 
         }
 
-        //解析商品配置
-        $this->order->parseConfig($commodity, $group);
+        try {
+            $this->order->parseConfig($commodity, $group);
+        } catch (JSONException $e) {
+            throw new JSONException("该商品配置异常，请商家检查商品[{$commodity->id}]的批发/规格/会员价配置：" . $e->getMessage());
+        }
 
+        //会员价留空(0)时回退零售价——必须在分站加价之前归一，
+        //否则前台会显示 0 元而下单按零售价收费，两边对不上
+        $commodity->user_price = $commodity->memberPrice();
 
-        //处理分站
         $this->substationPriceIncrease($commodity);
 
         $commodity->service_url = Config::get("service_url");
@@ -250,42 +207,47 @@ class Shop implements \App\Service\Shop
             $array['cover'] = "/favicon.ico";
         }
 
+        if (is_int($commodityId)) {
+            $array['description'] = \App\Util\RichHtml::sanitize(
+                (string)($array['description'] ?? ''),
+                (int)$commodity->owner === 0
+            );
+        }
+
         $array['share_url'] = Client::getUrl() . "/item/{$array['id']}";
         $array['login'] = (bool)$user;
         if ($array['login']) {
             $array['share_url'] .= "?from={$user->id}";
         }
 
-        //获取网站是否需要验证码
         $array['trade_captcha'] = (int)Config::get("trade_verification");
 
         if ($commodity->widget) {
             $array['widget'] = json_decode($commodity->widget, true);
         }
 
-        return $array;
+        $array['tags'] = Commodity::parseTags($array['tags'] ?? null);
+
+        //出站清洗放在最后一步：description 要等 RichHtml 处理完、cover 要等空值兜底完。
+        //这条路同时供免登录的前台商品详情和店铺共享的 item 接口使用，两边都不能看到
+        //shared_*（转售身份与上游商品编号）、level_price（会员定价结构）和 config 里的
+        //成本段；详情里的上游图片直链也在这里抹掉。见 App\Util\SharedPayload。
+        return \App\Util\SharedPayload::detail($array);
     }
 
-    /**
-     * @param int|string|null $stock
-     * @return string
-     */
     public function getHideStock(int|string|null $stock): string
     {
         $stock = (int)$stock;
-        return match (true) {
+
+        return lang(match (true) {
             $stock <= 0 => "已售罄",
             $stock <= 5 => "即将售罄",
             $stock <= 20 => "一般",
             $stock <= 100 => "充足",
             default => "非常多"
-        };
+        }, "tpl");
     }
 
-    /**
-     * @param int|string|null $stock
-     * @return int
-     */
     public function getStockState(int|string|null $stock): int
     {
         $stock = (int)$stock;
@@ -298,13 +260,6 @@ class Shop implements \App\Service\Shop
         };
     }
 
-    /**
-     * @param int|Commodity|string $commodity
-     * @param string|null $race
-     * @param array|null $sku
-     * @return string
-     * @throws JSONException
-     */
     public function getItemStock(int|Commodity|string $commodity, ?string $race = null, ?array $sku = []): string
     {
         if (is_int($commodity)) {
@@ -317,11 +272,9 @@ class Shop implements \App\Service\Shop
 
         if (($hook = \hook(Hook::SERVICE_SHOP_GET_ITEM_STOCK, $commodity, $race, $sku)) instanceof Stock) return $hook->getStock();
 
-        //对接商品
         if ($commodity->shared) {
             return $this->getSharedStock($commodity, $race, $sku);
         } else if ($commodity->delivery_way == 0) {
-            //库存
             $card = Card::query()->where("commodity_id", $commodity->id)->where("status", 0);
             if ($race) $card = $card->where("race", $race);
             if (!empty($sku)) {
@@ -334,26 +287,11 @@ class Shop implements \App\Service\Shop
         return (string)$commodity->stock;
     }
 
-
-    /**
-     * @param int $id
-     * @param string|null $race
-     * @param array|null $sku
-     * @return string
-     */
     public function getSharedStockHash(int $id, ?string $race = null, ?array $sku = []): string
     {
         return md5($id . $race . json_encode($sku ?: []));
     }
 
-
-    /**
-     * @param int|Commodity $commodity
-     * @param string|null $race
-     * @param array|null $sku
-     * @return void
-     * @throws JSONException
-     */
     public function updateSharedStock(int|Commodity $commodity, ?string $race = null, ?array $sku = []): void
     {
         if (is_int($commodity)) {
@@ -362,17 +300,19 @@ class Shop implements \App\Service\Shop
         if (!$commodity) throw new JSONException("商品不存在");
         $hash = $this->getSharedStockHash($commodity->id, $race, $sku);
         $stock = is_array($commodity->shared_stock) ? $commodity->shared_stock : [];
+        if (!array_key_exists($hash, $stock)) {
+            return;
+        }
         unset($stock[$hash]);
         Commodity::query()->where("id", $commodity->id)->update(["shared_stock" => $stock]);
+        //缓存被判定失效 = 上游那边刚成交过，库存必然变了
+        //hook() 的变参按引用接收，字面量传不进去，必须先落成变量
+        $ebIds = [(int)$commodity->id];
+        $ebAction = 'sync';
+        $ebBefore = null;
+        hook(Hook::COMMODITY_CHANGE_AFTER, $ebIds, $ebAction, $ebBefore);
     }
 
-    /**
-     * @param int|Commodity $commodity
-     * @param string|null $race
-     * @param array|null $sku
-     * @return string|null
-     * @throws JSONException
-     */
     public function getSharedStock(int|Commodity $commodity, ?string $race = null, ?array $sku = []): string|null
     {
         if (is_int($commodity)) {
@@ -386,26 +326,24 @@ class Shop implements \App\Service\Shop
             $array = is_array($commodity->shared_stock) ? $commodity->shared_stock : [];
             $array[$hash] = $stock;
             Commodity::query()->where("id", $commodity->id)->update(["shared_stock" => $array]);
+            //只有真正回源拿到新数据才广播；命中缓存的分支不走这里，天然自限流
+            //hook() 的变参按引用接收，字面量传不进去，必须先落成变量
+            $ebIds = [(int)$commodity->id];
+            $ebAction = 'sync';
+            $ebBefore = null;
+            hook(Hook::COMMODITY_CHANGE_AFTER, $ebIds, $ebAction, $ebBefore);
             return $stock;
         }
 
         return $commodity->shared_stock[$hash];
     }
 
-
-    /**
-     * @param Commodity|int|string $commodity
-     * @param int $cardId
-     * @return array
-     * @throws JSONException
-     */
     public function getDraft(Commodity|int|string $commodity, int $cardId): array
     {
         if (is_int($commodity)) {
             $commodity = Commodity::query()->find($commodity);
         }
         if (!$commodity) throw new JSONException("商品不存在");
-
 
         $card = Card::query()->where("commodity_id", $commodity->id)->where("id", $cardId)->first();
         if (!$card) {
@@ -423,11 +361,6 @@ class Shop implements \App\Service\Shop
         return ["draft_premium" => $card->draft_premium, "cost" => $card->cost];
     }
 
-
-    /**
-     * @param Commodity $commodity
-     * @return void
-     */
     public function substationPriceIncrease(Commodity &$commodity): void
     {
         $business = Business::get();
@@ -436,9 +369,6 @@ class Shop implements \App\Service\Shop
             return;
         }
 
-        /**
-         * @var UserCommodity $userCommodity
-         */
         $userCommodity = UserCommodity::query()->where("user_id", $business->user_id)->where("commodity_id", $commodity->id)->first();
 
         if (!$userCommodity) {
@@ -449,34 +379,36 @@ class Shop implements \App\Service\Shop
             $commodity->name = $userCommodity->name;
         }
 
+        if (trim((string)$userCommodity->description) !== '') {
+            $commodity->description = $userCommodity->description;
+        }
+
         $config = $commodity->config ?: [];
 
         if ($userCommodity->premium > 0) {
-
-            $commodity->price = (new Decimal($commodity->price))->mul($userCommodity->premium / 100)->add($commodity->price)->getAmount();
-            $commodity->user_price = (new Decimal($commodity->user_price))->mul($userCommodity->premium / 100)->add($commodity->user_price)->getAmount();
+            $commodity->price = $userCommodity->applyRounding((new Decimal($commodity->price))->mul($userCommodity->premium / 100)->add($commodity->price)->getAmount());
+            $commodity->user_price = $userCommodity->applyRounding((new Decimal($commodity->user_price))->mul($userCommodity->premium / 100)->add($commodity->user_price)->getAmount());
 
             if ($commodity->draft_premium > 0) {
-                $commodity->draft_premium = (new Decimal($commodity->draft_premium))->mul($userCommodity->premium / 100)->add($commodity->draft_premium)->getAmount();
+                $commodity->draft_premium = $userCommodity->applyRounding((new Decimal($commodity->draft_premium))->mul($userCommodity->premium / 100)->add($commodity->draft_premium)->getAmount());
             }
 
             if (is_array($config['category'])) {
                 foreach ($config['category'] as &$price) {
-                    $price = (new Decimal($price))->mul($userCommodity->premium / 100)->add($price)->getAmount();
+                    $price = $userCommodity->applyRounding((new Decimal($price))->mul($userCommodity->premium / 100)->add($price)->getAmount());
                 }
             }
 
-
             if (is_array($config['wholesale'])) {
                 foreach ($config['wholesale'] as &$price) {
-                    $price = (new Decimal($price))->mul($userCommodity->premium / 100)->add($price)->getAmount();
+                    $price = $userCommodity->applyRounding((new Decimal($price))->mul($userCommodity->premium / 100)->add($price)->getAmount());
                 }
             }
 
             if (is_array($config['category_wholesale'])) {
                 foreach ($config['category_wholesale'] as &$arr) {
                     foreach ($arr as &$price) {
-                        $price = (new Decimal($price))->mul($userCommodity->premium / 100)->add($price)->getAmount();
+                        $price = $userCommodity->applyRounding((new Decimal($price))->mul($userCommodity->premium / 100)->add($price)->getAmount());
                     }
                 }
             }
@@ -484,7 +416,7 @@ class Shop implements \App\Service\Shop
             if (is_array($config['sku'])) {
                 foreach ($config['sku'] as &$arr) {
                     foreach ($arr as &$price) {
-                        $price = (new Decimal($price))->mul($userCommodity->premium / 100)->add($price)->getAmount();
+                        $price = $userCommodity->applyRounding((new Decimal($price))->mul($userCommodity->premium / 100)->add($price)->getAmount());
                     }
                 }
             }
@@ -493,12 +425,6 @@ class Shop implements \App\Service\Shop
         $commodity->config = $config;
     }
 
-    /**
-     * @param Commodity|int $commodity
-     * @param int|string|float $amount
-     * @return string
-     * @throws JSONException
-     */
     public function getSubstationPrice(Commodity|int $commodity, int|string|float $amount): string
     {
         if (is_int($commodity)) {
@@ -515,9 +441,6 @@ class Shop implements \App\Service\Shop
             return (string)$amount;
         }
 
-        /**
-         * @var UserCommodity $userCommodity
-         */
         $userCommodity = UserCommodity::query()->where("user_id", $business->user_id)->where("commodity_id", $commodity->id)->first();
 
         if (!$userCommodity) {
@@ -525,10 +448,9 @@ class Shop implements \App\Service\Shop
         }
 
         if ($userCommodity->premium > 0) {
-            return (new Decimal($amount))->mul($userCommodity->premium / 100)->add($amount)->getAmount();
+            return $userCommodity->applyRounding((new Decimal($amount))->mul($userCommodity->premium / 100)->add($amount)->getAmount());
         }
 
         return (string)$amount;
     }
-
 }

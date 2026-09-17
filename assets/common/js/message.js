@@ -1,4 +1,10 @@
 const message = new class Message {
+    escape(text) {
+        return String(text ?? '').replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[c]);
+    }
+
     log(text, type = 'success') {
         toastr.options = {
            // "closeButton": true,
@@ -18,18 +24,20 @@ const message = new class Message {
             "hideMethod": "fadeOut"
         };
 
+        const safe = this.escape(i18n(text));
+
         switch (type) {
             case "success":
-                toastr.success(i18n(text));
+                toastr.success(safe);
                 break;
             case "error":
-                toastr.error(i18n(text));
+                toastr.error(safe);
                 break;
             case "info":
-                toastr.info(i18n(text));
+                toastr.info(safe);
                 break;
             case "warning":
-                toastr.warning(i18n(text));
+                toastr.warning(safe);
                 break;
         }
     }
@@ -50,7 +58,7 @@ const message = new class Message {
         this.log(text, 'info');
     }
 
-    ask(text, done = null, title = "您确定吗？", confirm = "确定") {
+    ask(text, done = null, title = "您确定吗？", confirm = "确定", options = {}) {
         Swal.fire({
             title: i18n(title),
             html: i18n(text),
@@ -58,6 +66,7 @@ const message = new class Message {
             showCancelButton: true,
             cancelButtonText: i18n("取消"),
             confirmButtonText: i18n(confirm),
+            ...options
         }).then((t => {
             if (t.value) {
                 done && done();
@@ -65,9 +74,6 @@ const message = new class Message {
         }));
     }
 
-    /**
-     * @param opt
-     */
     prompt(opt) {
         let options = {
             input: "text",
@@ -102,7 +108,6 @@ const message = new class Message {
         });
     }
 
-
     alert(text, type = 'success') {
         text = i18n(text);
         switch (type) {
@@ -118,3 +123,5 @@ const message = new class Message {
         }
     }
 }
+
+window.message = message;

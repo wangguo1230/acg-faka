@@ -9,24 +9,16 @@ use Kernel\Exception\RuntimeException;
 
 class Firewall
 {
+    private const BARE_AMPERSAND = '/&(?!#[0-9]{1,7};?|#[xX][0-9a-fA-F]{1,6};?|[a-zA-Z][a-zA-Z0-9]{1,31};)/';
+
+    private ?string $ampersandToken = null;
 
     use Singleton;
 
-    /**
-     * 防火墙规则列表
-     * @var array
-     */
     private array $rule = [];
 
-
-    /**
-     * @var \HTMLPurifier|null
-     */
     private ?\HTMLPurifier $HTMLPurifier = null;
 
-    /**
-     * @var Cache
-     */
     private Cache $cache;
 
     public function __construct()
@@ -35,11 +27,6 @@ class Firewall
         $this->cache = new Cache(BASE_PATH . "runtime/waf/PACKET", Cache::OPTIONS_STRING);
     }
 
-    /**
-     * @return void
-     * @throws \HTMLPurifier_Exception
-     * @throws \ReflectionException
-     */
     private function HTMLPurifierInit(): void
     {
         if ($this->HTMLPurifier) {
@@ -47,19 +34,17 @@ class Firewall
         }
 
         $config = \HTMLPurifier_Config::createDefault();
-        // 缓存配置，别装看不懂
-        $config->set('Cache.SerializerPath', BASE_PATH . "/runtime/waf"); // 换成你服务器的路径
+
+        $config->set('Cache.SerializerPath', BASE_PATH . "/runtime/waf");
         $config->set('Cache.SerializerPermissions', 0755);
         $config->set('Cache.DefinitionImpl', 'Serializer');
 
-        // 自定义 HTML 定义
         $config->set('HTML.DefinitionID', 'firewall.html');
-        $config->set('HTML.DefinitionRev', 1);
+        $config->set('HTML.DefinitionRev', 2);
 
         $config->set('Filter.Custom', [IgnoreStyleTagFilter::make()]);
 
         $config->getDefinition('URI')->addFilter(URISchemeFilter::make(), $config);
-
 
         if ($def = $config->maybeGetRawHTMLDefinition()) {
             $def->addElement(
@@ -98,8 +83,7 @@ class Firewall
                     'loop' => 'Number',
                     'bgcolor' => 'Text',
                     'width' => 'Text',
-                    'height' => 'Text',
-                    'style' => 'Text'
+                    'height' => 'Text'
                 )
             );
             $def->addElement(
@@ -125,17 +109,21 @@ class Firewall
             $def->addAttribute('a', 'target', 'Text');
             $def->addAttribute('img', 'width', 'Text');
             $def->addAttribute('img', 'height', 'Text');
-        }
 
+            foreach (['section', 'article', 'aside', 'nav', 'header', 'footer', 'main', 'figure', 'figcaption'] as $html5Block) {
+                $def->addElement($html5Block, 'Block', 'Flow', 'Common');
+            }
+            $def->addElement('details', 'Block', 'Flow', 'Common', ['open' => 'Bool#open']);
+            $def->addElement('summary', 'Block', 'Inline', 'Common');
+            $def->addElement('mark', 'Inline', 'Inline', 'Common');
+            $def->addElement('time', 'Inline', 'Inline', 'Common', ['datetime' => 'Text']);
+
+            $def->addElement('button', 'Inline', 'Flow', 'Common', ['type' => 'Enum#button', 'disabled' => 'Bool#disabled']);
+        }
 
         $this->HTMLPurifier = new \HTMLPurifier($config);
     }
 
-
-    /**
-     * @param callable $callable
-     * @return void
-     */
     public function check(callable $callable): void
     {
         $path = BASE_PATH . "/kernel/Waf/Rule";
@@ -144,8 +132,7 @@ class Firewall
         $this->rule["ARG"] = json_decode(file_get_contents($path . "/args.json"), true);
         $this->rule["COOKIE"] = json_decode(file_get_contents($path . "/cookie.json"), true);
 
-        //GET过滤
-        $getPara = urldecode(http_build_query($_GET));
+        $getPara = self::fullyDecode(http_build_query($_GET));
         foreach ($this->rule["ARG"] as $key => $value) {
             if (preg_match("#" . $value[1] . "#i", $getPara)) {
                 $callable($value);
@@ -160,8 +147,7 @@ class Firewall
             }
         }
 
-        //POST过滤
-        $postPara = urldecode(http_build_query($_POST));
+        $postPara = self::fullyDecode(http_build_query($_POST));
         foreach ($this->rule["POST"] as $key => $value) {
             if (preg_match("#" . $value[1] . "#i", $postPara)) {
                 $callable($value);
@@ -169,8 +155,7 @@ class Firewall
             }
         }
 
-        //COOKIE过滤
-        $cookiePara = urldecode(http_build_query($_COOKIE));
+        $cookiePara = self::fullyDecode(http_build_query($_COOKIE));
         foreach ($this->rule["COOKIE"] as $key => $value) {
             if (preg_match("#" . $value[1] . "#i", $cookiePara)) {
                 $callable($value);
@@ -179,41 +164,77 @@ class Firewall
         }
     }
 
-
     /**
-     * @param string $input
-     * @return mixed
-     * @throws \HTMLPurifier_Exception
-     * @throws \ReflectionException
+     * 反复 urldecode 直到稳定（最多 5 轮），再交给黑名单匹配。
+     * 否则双重/多重编码（如 %253Cscript%253E）只被解一次、绕过规则，却在下游被二次解码还原。
      */
+    private static function fullyDecode(string $input): string
+    {
+        for ($i = 0; $i < 5 && str_contains($input, '%'); $i++) {
+            $decoded = urldecode($input);
+            if ($decoded === $input) {
+                break;
+            }
+            $input = $decoded;
+        }
+        return $input;
+    }
+
     private function getCache(string $input): mixed
     {
-        /*       $hash = "firewall:" . $input;
-               $cache = $this->cache->get($hash);
-               if ($cache) {
-                   return $cache;
-               }*/
+        return $this->xssKillerLiteral($input);
+    }
+
+    public function xssKillerLiteral(mixed $input): mixed
+    {
+        if (is_array($input)) {
+            $cleanedArray = [];
+            foreach ($input as $key => $value) {
+                $cleanedArray[$key] = $this->xssKillerLiteral($value);
+            }
+            return $cleanedArray;
+        }
+        if (!is_string($input)) {
+            return $input;
+        }
+
+        $this->HTMLPurifierInit();
+
+        $token = $this->ampersandToken();
+        $shielded = (string)preg_replace(self::BARE_AMPERSAND, $token, $input);
+        $cleaned = $this->HTMLPurifier->purify($shielded);
+        return str_replace($token, '&', $cleaned);
+    }
+
+    private function ampersandToken(): string
+    {
+        return $this->ampersandToken ??= 'wafamp' . bin2hex(random_bytes(8)) . 'end';
+    }
+
+    public function xssKillerLegacy(mixed $input): mixed
+    {
+        if (is_array($input)) {
+            $cleanedArray = [];
+            foreach ($input as $key => $value) {
+                $cleanedArray[$key] = $this->xssKillerLegacy($value);
+            }
+            return $cleanedArray;
+        }
+        if (!is_string($input)) {
+            return $input;
+        }
 
         $this->HTMLPurifierInit();
         return $this->HTMLPurifier->purify(urldecode(str_replace("+", "%2B", $input)));
-        //  $this->cache->set($hash, $input);
-        //return $input;
     }
 
-    /**
-     * @param mixed $input
-     * @return mixed
-     * @throws RuntimeException
-     * @throws \HTMLPurifier_Exception
-     * @throws \ReflectionException
-     */
     public function xssKiller(mixed $input): mixed
     {
         if (is_array($input)) {
             $cleanedArray = [];
             foreach ($input as $key => $value) {
+                $key = $this->sanitizeKey($key);
                 if (is_string($value)) {
-                    //$cleanedArray[$key] = $this->HTMLPurifier->purify(urldecode(str_replace("+", "%2B", $value)));
                     $cleanedArray[$key] = $this->getCache($value);
                 } elseif (is_array($value)) {
                     $cleanedArray[$key] = $this->xssKiller($value);
@@ -223,19 +244,12 @@ class Firewall
             }
             return $cleanedArray;
         } elseif (is_string($input)) {
-            // return $this->HTMLPurifier->purify(urldecode(str_replace("+", "%2B", $input)));
             return $this->getCache($input);
         } else {
             return $input;
         }
     }
 
-
-    /**
-     * @param mixed $input
-     * @param int $flags
-     * @return mixed
-     */
     public function filterContent(mixed $input, int $flags): mixed
     {
         if (is_null($input)) {
@@ -245,6 +259,7 @@ class Firewall
         if (is_array($input)) {
             $cleanedArray = [];
             foreach ($input as $key => $value) {
+                $key = $this->sanitizeKey($key);
                 if (is_string($value)) {
                     $cleanedArray[$key] = $this->filter($value, $flags);
                 } elseif (is_array($value)) {
@@ -259,12 +274,6 @@ class Firewall
         }
     }
 
-
-    /**
-     * @param mixed $content
-     * @param int $flags
-     * @return mixed
-     */
     public function filter(mixed $content, int $flags): mixed
     {
         if (is_string($content)) {
@@ -283,5 +292,13 @@ class Firewall
             $content = (bool)$content;
         }
         return $content;
+    }
+
+    private function sanitizeKey(mixed $key): mixed
+    {
+        if (!is_string($key)) {
+            return $key;
+        }
+        return preg_replace('/[\x00-\x1F\x7F<>"\'\\\\]/', '', $key);
     }
 }

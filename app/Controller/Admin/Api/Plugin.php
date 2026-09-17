@@ -26,7 +26,9 @@ class Plugin extends Manage
         $appStore = (array)json_decode((string)file_get_contents(BASE_PATH . "/runtime/plugin/store.cache"), true);
         $path = BASE_PATH . "/app/Plugin/";
 
-        $keywords = urldecode((string)$_POST['keywords']);
+        //搜索不分大小写：插件名里 AI / USDT / Telegram 这类词大小写各异，
+        //站长按小写打进去搜不到很反直觉
+        $keywords = trim(urldecode((string)($_POST['keywords'] ?? '')));
         $status = $_POST['equal-status'];
 
         foreach ($plugins as $key => $plugin) {
@@ -55,8 +57,21 @@ class Plugin extends Manage
             }
 
 
-            if ($keywords) {
-                if (!str_contains($plugin[\App\Consts\Plugin::NAME], $keywords) && !str_contains($plugin[\App\Consts\Plugin::DESCRIPTION], $keywords)) {
+            if ($keywords !== '') {
+                //除了显示名与简介，插件标识也参与匹配：装过的人更习惯直接打 TranslationBot、Usdt 这种英文名
+                $haystack = [
+                    (string)($plugin[\App\Consts\Plugin::NAME] ?? ''),
+                    (string)($plugin[\App\Consts\Plugin::DESCRIPTION] ?? ''),
+                    (string)($plugin[\App\Consts\Plugin::PLUGIN_NAME] ?? ''),
+                ];
+                $hit = false;
+                foreach ($haystack as $text) {
+                    if ($text !== '' && mb_stripos($text, $keywords) !== false) {
+                        $hit = true;
+                        break;
+                    }
+                }
+                if (!$hit) {
                     unset($plugins[$key]);
                 }
             }
@@ -74,6 +89,13 @@ class Plugin extends Manage
             return ($b['HAVE_UPDATE'] ?? false) <=> ($a['HAVE_UPDATE'] ?? false);
         });
 
+        //插件名/简介来自各插件的 Info.php，属动态文案：翻译放在关键字筛选之后，
+        //保证搜索仍按中文原文匹配
+        $plugins = \Kernel\Util\Lang::transList($plugins, [
+            \App\Consts\Plugin::NAME,
+            \App\Consts\Plugin::DESCRIPTION,
+        ], 'meta');
+
         return $this->json(200, 'success', ["list" => $plugins]);
     }
 
@@ -87,6 +109,11 @@ class Plugin extends Manage
     public function setConfig(Request $request): array
     {
         $map = $request->post(flags: Filter::NORMAL);
+
+        // 安全加固：插件配置键名仅允许 [A-Za-z0-9_]。攻击者曾把 PHP 代码藏进数组"键名"，
+        // 经 var_export 落库、再由 _plugin_stop→_plugin_set_config 手写拼接重写时逃逸引号，
+        // 造成配置文件代码注入 RCE。全站插件配置键（STATUS/top/...）均在此字符集内，故直接丢弃非法键名。
+        $map = array_filter($map, static fn($k): bool => preg_match('/^[A-Za-z0-9_]+$/D', (string)$k) === 1, ARRAY_FILTER_USE_KEY);
 
         $id = $request->get("id") ?: $request->post("id");
 
@@ -163,6 +190,8 @@ class Plugin extends Manage
     public function setThemeConfig(): array
     {
         $map = $this->request->post(flags: Filter::NORMAL);
+        // 安全加固：同 setConfig，主题配置键名仅允许 [A-Za-z0-9_]，拦截键名注入。
+        $map = array_filter($map, static fn($k): bool => preg_match('/^[A-Za-z0-9_]+$/D', (string)$k) === 1, ARRAY_FILTER_USE_KEY);
         $id = $this->request->get("id") ?: $this->request->post("id");
 
         if (!$id) {

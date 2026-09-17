@@ -103,6 +103,76 @@ const component = new class Component {
         return template.innerHTML;
     }
 
+    sanitizeInlineHtml(value) {
+        const template = document.createElement('template');
+        template.innerHTML = String(value ?? '');
+        const allowedTags = new Set(['B', 'STRONG', 'BR', 'SPAN', 'A']);
+        const dangerousTags = new Set([
+            'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'SVG', 'MATH', 'TEMPLATE',
+            'NOSCRIPT', 'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'OPTION',
+            'META', 'LINK', 'BASE', 'VIDEO', 'AUDIO', 'CANVAS', 'XMP', 'PLAINTEXT',
+            'NOEMBED', 'LISTING', 'TITLE', 'FRAME', 'FRAMESET'
+        ]);
+        const normalizeColor = value => {
+            const probe = document.createElement('span');
+            probe.style.color = String(value ?? '').trim();
+            return probe.style.color;
+        };
+        const normalizeLink = value => {
+            const source = String(value ?? '').trim();
+            if (!/^https?:\/\//i.test(source) || /[\u0000-\u0020\u007f-\u009f\\]/.test(source)) return '';
+            try {
+                const url = new URL(source);
+                return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
+            } catch (error) {
+                return '';
+            }
+        };
+        const walk = node => {
+            Array.from(node.childNodes).forEach(child => {
+                if (child.nodeType === Node.COMMENT_NODE) {
+                    child.remove();
+                    return;
+                }
+                if (child.nodeType !== Node.ELEMENT_NODE) return;
+                const tag = String(child.tagName || '').toUpperCase();
+                if (!allowedTags.has(tag)) {
+                    if (dangerousTags.has(tag)) {
+                        child.remove();
+                    } else {
+                        walk(child);
+                        child.replaceWith(...Array.from(child.childNodes));
+                    }
+                    return;
+                }
+
+                const color = tag === 'BR' ? '' : normalizeColor(child.style.color);
+                const href = tag === 'A' ? normalizeLink(child.getAttribute('href')) : '';
+                Array.from(child.attributes).forEach(attribute => child.removeAttribute(attribute.name));
+                if (color) child.style.color = color;
+                if (tag === 'A') {
+                    if (!href) {
+                        walk(child);
+                        child.replaceWith(...Array.from(child.childNodes));
+                        return;
+                    }
+                    child.setAttribute('href', href);
+                    child.setAttribute('target', '_blank');
+                    child.setAttribute('rel', 'noopener noreferrer nofollow');
+                }
+                walk(child);
+            });
+        };
+        walk(template.content);
+        return template.innerHTML;
+    }
+
+    plainInlineText(value) {
+        const template = document.createElement('template');
+        template.innerHTML = this.sanitizeInlineHtml(value);
+        return (template.content.textContent || '').trim();
+    }
+
     previewMessage(messageData = {}) {
         const title = this.escapeHtml(messageData.title || '消息通知');
         const content = this.sanitizeRichHtml(messageData.content || '');
@@ -116,7 +186,7 @@ const component = new class Component {
             + `<header class="md-message-preview__header">`
             + `<span class="md-message-preview__icon" aria-hidden="true"><span class="material-icons-outlined">notifications</span></span>`
             + `<div class="md-message-preview__heading"><span>MESSAGE</span><h2>${title}</h2>${createTime ? `<time>${createTime}</time>` : ''}</div>`
-            + `<button type="button" class="md-message-preview__close" aria-label="关闭消息"><span class="material-icons-outlined">close</span></button>`
+            + `<button type="button" class="md-message-preview__close" aria-label="${i18n('关闭消息')}"><span class="material-icons-outlined">close</span></button>`
             + `</header><div class="md-message-preview__content markdown-body">${content}</div></article>`;
 
         return layer.open({
@@ -132,7 +202,7 @@ const component = new class Component {
             area: mobile ? ['100%', '100%'] : '600px',
             skin: 'md-message-layer',
             content: contentHtml,
-            btn: jumpUrl ? [`${util.icon('fa-duotone fa-regular fa-arrow-up-right-from-square')} 前往地址`] : false,
+            btn: jumpUrl ? [`${util.icon('fa-duotone fa-regular fa-arrow-up-right-from-square')} ${i18n('前往地址')}`] : false,
             yes: index => {
                 const parsed = new URL(jumpUrl, window.location.origin);
                 layer.close(index);
@@ -201,6 +271,8 @@ const component = new class Component {
 
     previewImage(imageUrl) {
         if (!imageUrl) return;
+        const isMobile = Boolean(window.AdminMobile && typeof window.AdminMobile.isEnabled === 'function' && window.AdminMobile.isEnabled());
+        const previousFocus = document.activeElement;
         const safeUrl = String(imageUrl)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -209,11 +281,22 @@ const component = new class Component {
         layer.open({
             type: 1,
             title: false,
-            closeBtn: 0,
-            anim: 5,
-            area: 'auto',
+            closeBtn: isMobile ? 1 : 0,
+            anim: isMobile ? 0 : 5,
+            area: isMobile ? ['100vw', '100dvh'] : 'auto',
+            skin: isMobile ? 'md-image-preview-layer' : '',
             shadeClose: true,
-            content: `<img src="${safeUrl}" style="width: auto;">`
+            content: `<div class="md-image-preview"><img src="${safeUrl}" alt="${i18n('图片预览')}"></div>`,
+            success: ($layer) => {
+                if (!isMobile) return;
+                $layer.attr({role: 'dialog', 'aria-modal': 'true', 'aria-label': '图片预览'});
+                $layer.find('.layui-layer-close').attr('aria-label', '关闭图片预览');
+            },
+            end: () => {
+                if (previousFocus && typeof previousFocus.focus === 'function' && document.contains(previousFocus)) {
+                    previousFocus.focus();
+                }
+            }
         });
     }
 
@@ -255,10 +338,11 @@ const component = new class Component {
      */
     popup(opt = {}) {
         const submitTab = getVar("HACK_SUBMIT_TAB"), submitForm = getVar("HACK_SUBMIT_FORM");
+        const hookSubmit = opt.submitRoute ?? opt.submit;
 
         if (submitTab instanceof Array) {
             submitTab.forEach(tmp => {
-                if (tmp.submit == opt.submit) {
+                if (tmp.submit == hookSubmit) {
                     opt?.tab?.push(evalResults(tmp.code));
                 }
             });
@@ -266,7 +350,7 @@ const component = new class Component {
 
         if (submitForm instanceof Array) {
             submitForm.forEach(tmp => {
-                if (tmp.submit == opt.submit) {
+                if (tmp.submit == hookSubmit) {
                     for (let i = 0; i < opt?.tab?.length; i++) {
                         const forms = opt?.tab[i]?.form;
                         for (let j = 0; j < forms?.length; j++) {
@@ -287,47 +371,22 @@ const component = new class Component {
 
         let form = new Form(opt);
         let tab = form.getTab();
-        let area = '680px';
+        const closePopup = index => {
+            index !== undefined && index !== null && layer.close(index);
+        };
+        const submitPopup = (index = null, close = closePopup) => {
+            let data = form.getData();
+            if (!form.validator()) {
+                return false;
+            }
 
-        if (opt.width && opt.height) {
-            area = [opt.width, opt.height];
-        } else if (opt.width) {
-            area = opt.width;
-        }
-
-        // Right-side drawer variant (opt.drawer:true): a full-height panel flush to the
-        // right edge. Same form logic / tabs / submit as the modal — only presentation differs.
-        const isDrawer = opt.drawer === true && util.isPc();
-        if (isDrawer) {
-            const drawerWidth = (opt.width && opt.width !== 'auto') ? opt.width : '620px';
-            area = [drawerWidth, '100%'];
-        }
-
-        if (!util.isPc()) {
-            area = ["100%", "100%"];
-        }
-
-        //弹窗参数
-        let openOption = {
-            shade: opt.shade ?? 0.3,
-            btn: opt.submit ? [(opt.confirmText ? i18n(opt.confirmText) : null) ?? util.icon("fa-duotone fa-regular fa-floppy-disk me-1 text-success") + i18n("保存"), util.icon('fa-duotone fa-regular fa-xmark me-1 text-warning') + i18n('取消')] : false,
-            area: area,
-            maxmin: opt.maxmin ?? true,
-            closeBtn: opt.closeBtn ?? 1,
-            shadeClose: opt.shadeClose ?? false,
-            anim: 4,
-            yes: (index, lay) => {
-                let data = form.getData();
-                if (!form.validator()) {
-                    return;
-                }
-
-                if (typeof opt.submit == "function") {
-                    opt.submit(data, index);
-                    return;
-                }
-                opt.submit && (util.post(opt.submit, data, res => {
-                    layer.close(index);
+            if (typeof opt.submit == "function") {
+                opt.submit(data, index);
+                return true;
+            }
+            if (opt.submit) {
+                util.post(opt.submit, data, res => {
+                    close(index);
                     if (opt.message !== false) {
                         if (!res.msg || res.msg == "success") {
                             message.alert(opt.message ?? '您提交的数据已被系统存储(｡•ᴗ-)_', 'success');
@@ -339,13 +398,148 @@ const component = new class Component {
                 }, error => {
                     opt.error && opt.error(error);
                     message.alert(error.msg, 'error');
-                }));
+                });
+            }
+            return true;
+        };
+        const registerPopup = index => {
+            form.setIndex(index);
+            form.registerEvent();
+            typeof opt.renderComplete == "function" && opt.renderComplete(form.getUnique(), index);
+        };
+
+        // A mobile presenter may replace only the visual container. It receives
+        // the final hook-processed Form and the exact desktop submit path.
+        const popupContext = {
+            options: opt,
+            form: form,
+            tab: tab,
+            tabs: tab,
+            submit: submitPopup,
+            close: closePopup,
+            register: registerPopup
+        };
+        try {
+            const presenter = window.AdminMobile?.presentPopup;
+            const presented = typeof presenter === 'function'
+                ? presenter.call(window.AdminMobile, popupContext)
+                : false;
+            if (presented === true || presented?.handled === true) {
+                return presented;
+            }
+        } catch (error) {
+            util.debug('AdminMobile popup presenter fallback: ' + error.message, '#ff4f33');
+        }
+
+        // Admin mobile is viewport-driven rather than UA-driven. If its
+        // presenter is temporarily unavailable (for example during script or
+        // PJAX lifecycle boundaries), keep the legacy Layer path mobile-safe
+        // instead of falling back to a desktop width on Chrome's desktop UA.
+        const useAdminMobileFallback = window.AdminMobile?.isEnabled?.() === true;
+        let legacyPopupIndex = null;
+        let legacyResizeObserver = null;
+        let legacyAdaptiveFit = null;
+        let legacySelectFloater = null;
+        let legacyPopupDestroyed = false;
+        let legacyEndCalled = false;
+        const legacyLifecycleEvent = 'pjax:beforeReplace.componentPopup' + form.getUnique();
+        const restoreDrawerScroll = () => {
+            if (!isDrawer) {
+                return;
+            }
+            document.body.style.overflow = '';
+            document.body.style.paddingRight = '';
+        };
+        const destroyLegacyPopup = () => {
+            if (legacySelectFloater) {
+                legacySelectFloater();
+                legacySelectFloater = null;
+            }
+            if (legacyResizeObserver) {
+                try {
+                    legacyResizeObserver.disconnect();
+                } catch (error) {
+                    util.debug('Component popup ResizeObserver destroy skipped: ' + form.getUnique(), '#ff4f33');
+                }
+                legacyResizeObserver = null;
+            }
+            $(document).off(legacyLifecycleEvent);
+            restoreDrawerScroll();
+            if (legacyPopupDestroyed) {
+                return;
+            }
+            legacyPopupDestroyed = true;
+            if (typeof form.destroy === 'function') {
+                try {
+                    form.destroy();
+                } catch (error) {
+                    util.debug('Component popup Form destroy skipped: ' + form.getUnique(), '#ff4f33');
+                }
+            }
+        };
+        const closeLegacyPopupForPage = () => {
+            const index = legacyPopupIndex ?? (typeof form.getIndex === 'function' ? form.getIndex() : null);
+            if (index !== undefined && index !== null) {
+                try {
+                    layer.close(index);
+                } catch (error) {
+                    util.debug('Component popup close during PJAX skipped: ' + form.getUnique(), '#ff4f33');
+                }
+            }
+            // Layer may defer its end callback until the exit animation ends,
+            // while PJAX replaces the owning DOM immediately.
+            destroyLegacyPopup();
+        };
+
+        let area = '680px';
+
+        if (opt.width && opt.height) {
+            area = [opt.width, opt.height];
+        } else if (opt.width) {
+            area = opt.width;
+        }
+
+        // Right-side drawer variant (opt.drawer:true): a full-height panel flush to the
+        // right edge. Same form logic / tabs / submit as the modal — only presentation differs.
+        const isDrawer = opt.drawer === true && util.isPc() && !useAdminMobileFallback;
+        if (isDrawer) {
+            const drawerWidth = (opt.width && opt.width !== 'auto') ? opt.width : '620px';
+            area = [drawerWidth, '100%'];
+        }
+
+        // fitTabs:true — widen the popup so every tab header fits on one row (opt.width is the
+        // minimum, ~92vw the maximum); tab-heavy plugin/theme configs no longer wrap their tabs.
+        // Drawers are included: their title bar wraps exactly the same way, and the extra width
+        // is taken from the empty screen to their left, so nothing else has to move.
+        if (opt.fitTabs === true && !useAdminMobileFallback && util.isPc() && tab.length > 1) {
+            area = this.fitTabsArea(tab, area, isDrawer);
+        }
+
+        if (useAdminMobileFallback || !util.isPc()) {
+            area = ["100%", "100%"];
+        }
+
+        //弹窗参数
+        let openOption = {
+            shade: opt.shade ?? 0.3,
+            btn: opt.submit ? [(opt.confirmText ? i18n(opt.confirmText) : null) ?? util.icon("fa-duotone fa-regular fa-floppy-disk me-1 text-success") + i18n("保存"), util.icon('fa-duotone fa-regular fa-xmark me-1 text-warning') + i18n('取消')] : false,
+            area: area,
+            maxmin: useAdminMobileFallback ? false : (opt.maxmin ?? true),
+            closeBtn: opt.closeBtn ?? 1,
+            shadeClose: opt.shadeClose ?? false,
+            anim: useAdminMobileFallback ? 2 : 4,
+            yes: (index, lay) => {
+                submitPopup(index);
             },
             success: (lay, layIndex, that) => {
                 let contentElem = $(lay).find('.layui-layer-content');
 
+                legacyPopupIndex = layIndex;
                 form.setIndex(layIndex);
                 form.registerEvent();
+                // Select dropdowns must float above the popup instead of being clipped by
+                // the scrollable content box.
+                legacySelectFloater = this.floatSelectDropdowns(lay);
                 // Drawer: lock background scroll (also removes the page scrollbar so the
                 // drawer sits flush to the viewport edge); pad the body to avoid a reflow shift.
                 if (isDrawer) {
@@ -353,10 +547,12 @@ const component = new class Component {
                     document.body.style.overflow = 'hidden';
                     if (sw > 0) document.body.style.paddingRight = sw + 'px';
                 }
-                $('.component-popup.' + form.getUnique()).append('<img src="/assets/common/images/ks.webp" class="component-popup-acg">');
+                if (!useAdminMobileFallback) {
+                    $('.component-popup.' + form.getUnique()).append('<img src="/assets/common/images/ks.webp" class="component-popup-acg">');
+                }
 
 
-                if (opt.content && util.isPc()) {
+                if (opt.content && util.isPc() && !useAdminMobileFallback) {
                     if (opt.content.css) {
                         for (const cssKey in opt.content.css) {
                             contentElem.css(cssKey, opt.content.css[cssKey]);
@@ -364,19 +560,29 @@ const component = new class Component {
                     }
                 }
 
-                if (opt.autoPosition && util.isPc() && !isDrawer) {
-                    this.resizeObserver($(lay).find(".layui-layer-content"), event => {
+                if (opt.autoPosition && util.isPc() && !isDrawer && !useAdminMobileFallback) {
+                    // adaptiveHeight：高度跟着内容走，封顶到视口（100vh - 155px）才在内部滚动。
+                    // 只长不缩——切到内容少的标签页时弹窗不回缩，标签栏不会上下跳；
+                    // 最大化期间尺寸归 layer 管（它会立刻给最大化按钮加 layui-layer-maxmin）。
+                    let adaptiveSticky = 0;
+                    legacyAdaptiveFit = () => {
+                        if ($(lay).find(".layui-layer-max").hasClass("layui-layer-maxmin")) {
+                            return;
+                        }
+                        const content = $(lay).find(".layui-layer-content");
+                        content.css({height: "auto", minHeight: "", maxHeight: "calc(100vh - 155px)", overflowY: "auto"});
+                        adaptiveSticky = Math.max(adaptiveSticky, content.css("box-sizing") === "border-box" ? content.outerHeight() : content.height());
+                        content.css("minHeight", `min(${adaptiveSticky}px, calc(100vh - 155px))`);
+                        // layer 按打开瞬间的空盒子写死过外框/内容高度，这里交还给内容
+                        $(lay).css("height", "auto");
+                        that.offset();
+                    };
+
+                    legacyResizeObserver = this.resizeObserver($(lay).find(".layui-layer-content"), event => {
                         const content = $(lay).find(".layui-layer-content");
 
                         if (opt.adaptiveHeight === true) {
-                            content.css({
-                                height: "auto",
-                                maxHeight: "calc(100vh - 155px)",
-                                overflowY: "auto"
-                            });
-
-                            layer.iframeAuto(layIndex);
-                            that.offset();
+                            legacyAdaptiveFit();
                             return;
                         }
 
@@ -401,20 +607,37 @@ const component = new class Component {
                 typeof opt.renderComplete == "function" && opt.renderComplete(form.getUnique(), layIndex);
             },
             end: () => {
-                if (isDrawer) { document.body.style.overflow = ''; document.body.style.paddingRight = ''; }
+                if (legacyEndCalled) {
+                    return;
+                }
+                legacyEndCalled = true;
+                destroyLegacyPopup();
                 opt.end && opt.end();
             },
             full: (layero, index, that) => {
                 let $handle = layero.addClass("border-none");
                 $handle.find(".layui-layer-title").addClass("border-none");
                 $handle.find(".layui-layer-btn").addClass("border-none");
+                // 自适应的上下限会把铺满后的内容区卡住，最大化期间先撤掉
+                if (opt.adaptiveHeight === true) {
+                    $handle.find(".layui-layer-content").css({minHeight: "", maxHeight: ""});
+                }
             },
             restore: (layero, index, that) => {
                 let $handle = layero.removeClass("border-none");
                 $handle.find(".layui-layer-title").removeClass("border-none");
                 $handle.find(".layui-layer-btn").removeClass("border-none");
+                // 还原时 layer 写回的是最大化前的像素高度，重新交给内容自适应
+                if (opt.adaptiveHeight === true && legacyAdaptiveFit) {
+                    legacyAdaptiveFit();
+                }
             }
         };
+
+        if (useAdminMobileFallback) {
+            openOption.resize = false;
+            openOption.move = false;
+        }
 
         if (isDrawer) {
             openOption.offset = 'r';      // flush to the right edge, full height
@@ -424,22 +647,154 @@ const component = new class Component {
             openOption.move = false;      // fixed position (no drag)
         }
         const drawerSkin = isDrawer ? ' component-drawer' : '';
+        const mobileFallbackSkin = useAdminMobileFallback ? ' admin-mobile-layer-popup admin-mobile-layer-popup--task' : '';
+        const mobileFallbackContent = content => useAdminMobileFallback
+            ? '<div class="admin-mobile-popup-form">' + content + '</div>'
+            : content;
 
-        if (tab.length === 1) {
-            //单选卡
-            openOption.type = 1;
-            openOption.content = tab[0].content;
-            openOption.title = tab[0].title;
-            openOption.skin = 'component-popup ' + form.getUnique() + drawerSkin;
-            layer.open(openOption);
-        } else {
-            //多选卡
-            openOption.tab = tab;
-            openOption.skin = 'layui-layer-tab component-popup ' + form.getUnique() + drawerSkin;
-            layer.tab(openOption);
+        try {
+            if (tab.length === 1) {
+                //单选卡
+                openOption.type = 1;
+                openOption.content = mobileFallbackContent(tab[0].content);
+                openOption.title = tab[0].title;
+                openOption.skin = 'component-popup ' + form.getUnique() + drawerSkin + mobileFallbackSkin;
+                legacyPopupIndex = layer.open(openOption);
+            } else {
+                //多选卡
+                openOption.tab = useAdminMobileFallback
+                    ? tab.map(item => Object.assign({}, item, {content: mobileFallbackContent(item.content)}))
+                    : tab;
+                openOption.skin = 'layui-layer-tab component-popup ' + form.getUnique() + drawerSkin + mobileFallbackSkin;
+                legacyPopupIndex = layer.tab(openOption);
+            }
+            if (!legacyPopupDestroyed) {
+                $(document).off(legacyLifecycleEvent).one(legacyLifecycleEvent, closeLegacyPopupForPage);
+            }
+        } catch (error) {
+            const failedIndex = legacyPopupIndex ?? (typeof form.getIndex === 'function' ? form.getIndex() : null);
+            if (failedIndex !== undefined && failedIndex !== null) {
+                try {
+                    layer.close(failedIndex);
+                } catch (closeError) {
+                    util.debug('Component popup close after failure skipped: ' + form.getUnique(), '#ff4f33');
+                }
+            }
+            destroyLegacyPopup();
+            throw error;
         }
     }
 
+
+    /**
+     * Measure how wide a tabbed popup must be for all tab headers to sit on one row and
+     * return the adjusted layer `area` (string or [width, height]); never narrower than the
+     * requested width, never wider than ~92% of the viewport.
+     */
+    fitTabsArea(tab = [], area = '680px', isDrawer = false) {
+        try {
+            const base = parseInt(Array.isArray(area) ? area[0] : area, 10) || 680;
+            // The probe must carry the same classes as the real popup, otherwise skin rules that
+            // only match `.component-drawer` (e.g. the 40px gutter reserved for the close button)
+            // are missed and the measured width comes out too small.
+            const probe = $('<div class="layui-layer layui-layer-page layui-layer-tab component-popup' + (isDrawer ? ' component-drawer' : '') + '"></div>')
+                .css({position: 'fixed', left: '-99999px', top: 0, width: 'auto', height: 'auto', visibility: 'hidden', pointerEvents: 'none'});
+            const title = $('<div class="layui-layer-title"></div>')
+                .css({display: 'inline-flex', flexWrap: 'nowrap', width: 'auto', maxWidth: 'none', whiteSpace: 'nowrap'});
+            tab.forEach(item => title.append($('<span></span>').html(item?.title ?? '')));
+            probe.append(title).appendTo(document.body);
+            let need = 0;
+            title.children('span').each(function () {
+                need += this.getBoundingClientRect().width;
+            });
+            const cs = window.getComputedStyle(title.get(0));
+            need += (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) + 24;
+            probe.remove();
+            const cap = Math.max(base, Math.floor(window.innerWidth * 0.92));
+            const width = Math.min(Math.max(base, Math.ceil(need)), cap);
+            if (width <= base) {
+                return area;
+            }
+            return Array.isArray(area) ? [width + 'px', area[1]] : width + 'px';
+        } catch (error) {
+            return area;
+        }
+    }
+
+    /**
+     * layui selects render their option list as an absolutely positioned <dl> inside the
+     * field, so inside a scrolling popup body the list gets clipped. While a select inside
+     * `root` is open, pin its <dl> to the viewport (position:fixed, sized to the field,
+     * flipped upwards when there is no room below) and follow scrolling / resizing.
+     * Returns a disposer.
+     */
+    floatSelectDropdowns(root) {
+        const node = root?.jquery ? root.get(0) : root;
+        if (!node || !('MutationObserver' in window)) {
+            return null;
+        }
+        const GAP = 4, PAD = 8, MAX = 300, MIN = 120;
+        const opened = new Set();
+        const dlOf = sel => Array.prototype.find.call(sel.children, child => child.tagName === 'DL');
+        const place = sel => {
+            const dl = dlOf(sel), title = sel.querySelector('.layui-select-title');
+            if (!dl || !title) {
+                return;
+            }
+            const rect = title.getBoundingClientRect(), vh = window.innerHeight;
+            dl.style.position = 'fixed';
+            dl.style.left = rect.left + 'px';
+            dl.style.width = rect.width + 'px';
+            dl.style.minWidth = '0';
+            dl.style.maxHeight = MAX + 'px';
+            const height = dl.offsetHeight;
+            const below = vh - rect.bottom - GAP - PAD;
+            const above = rect.top - GAP - PAD;
+            // NB: never touch classes in here — the observer below watches class changes and
+            // would re-enter endlessly; inline top/bottom already override .layui-form-selectup.
+            const flip = height > below && above > below;
+            if (flip) {
+                dl.style.top = 'auto';
+                dl.style.bottom = (vh - rect.top + GAP) + 'px';
+            } else {
+                dl.style.bottom = 'auto';
+                dl.style.top = (rect.bottom + GAP) + 'px';
+            }
+            dl.style.maxHeight = Math.max(MIN, Math.min(MAX, flip ? above : below)) + 'px';
+        };
+        const reset = sel => {
+            const dl = dlOf(sel);
+            if (dl) {
+                ['position', 'left', 'top', 'bottom', 'width', 'minWidth', 'maxHeight'].forEach(key => dl.style[key] = '');
+            }
+        };
+        const observer = new MutationObserver(records => {
+            records.forEach(record => {
+                const el = record.target;
+                if (!(el instanceof Element) || !el.classList.contains('layui-form-select')) {
+                    return;
+                }
+                if (el.classList.contains('layui-form-selected')) {
+                    opened.add(el);
+                    place(el);
+                } else if (opened.has(el)) {
+                    opened.delete(el);
+                    reset(el);
+                }
+            });
+        });
+        observer.observe(node, {attributes: true, attributeFilter: ['class'], subtree: true});
+        const follow = () => opened.forEach(place);
+        node.addEventListener('scroll', follow, true);
+        window.addEventListener('resize', follow);
+        return () => {
+            observer.disconnect();
+            node.removeEventListener('scroll', follow, true);
+            window.removeEventListener('resize', follow);
+            opened.forEach(reset);
+            opened.clear();
+        };
+    }
 
     idObjToList(array = []) {
         let list = [];
@@ -468,14 +823,20 @@ const component = new class Component {
 
 
     resizeObserver(element, done) {
-        if ('ResizeObserver' in window) {
-            let resizeObserver = new ResizeObserver(function (entries) {
-                for (let entry of entries) {
-                    done && done(entry);
-                }
-            });
-            resizeObserver.observe(element.get(0));
+        if (!('ResizeObserver' in window)) {
+            return null;
         }
+        const target = element?.jquery ? element.get(0) : element;
+        if (!target) {
+            return null;
+        }
+        const resizeObserver = new ResizeObserver(function (entries) {
+            for (let entry of entries) {
+                done && done(entry);
+            }
+        });
+        resizeObserver.observe(target);
+        return resizeObserver;
     }
 
 }

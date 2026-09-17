@@ -12,8 +12,10 @@ use App\Service\Email;
 use App\Service\Sms;
 use App\Service\UserSSO;
 use App\Util\Captcha;
+use App\Util\Client;
 use App\Util\Date;
 use App\Util\Str;
+use App\Util\Throttle;
 use App\Util\Validation;
 use Kernel\Annotation\Inject;
 use Kernel\Annotation\Interceptor;
@@ -122,19 +124,42 @@ class Authentication extends User
             $user->pid = $_COOKIE['promotion_from'];
         }
 
+        //风控判决。刻意放在下面那个 try 之**外**：try 会把任何异常改写成「注册失败」，
+        //风控给的具体理由（含可查证编号）到用户那儿就没了。
+        $risk = new \App\Entity\RiskContext('register');
+        hook(Hook::USER_API_AUTH_REGISTER_VALIDATED, $risk, $user);
+
+        if ($risk->denied()) {
+            throw new JSONException($risk->message("注册失败"));
+        }
+
+        //挂人工审核 = 账号照建但不可用，且**不签发会话**。
+        //user.status 只有 1 才算可用（UserVisitor / UserSession 都这么判），
+        //所以未审核账号自然登录不了，在后台会员列表里就是「禁用」，既有工具全都认得。
+        //不跳过 loginSuccess 的话，用户会「注册成功」之后下一次点击就掉线。
+        $riskHeld = $risk->held();
+        if ($riskHeld) {
+            $user->status = 0;
+        }
+
         try {
             //session销毁
             Captcha::destroy("register");
                 $user->phone != null ?? $this->sms->destroyCaptcha($user->phone, Sms::CAPTCHA_REGISTER);
                 $user->email != null ?? $this->email->destroyCaptcha($user->email, Email::CAPTCHA_REGISTER);
             $user->save();
-            $this->sso->loginSuccess($user);
+            if (!$riskHeld) {
+                $this->sso->loginSuccess($user);
+            }
         } catch (\Exception $e) {
             throw new JSONException("注册失败");
         }
 
 
         hook(Hook::USER_API_AUTH_REGISTER_AFTER, $user);
+        if ($riskHeld) {
+            return $this->json(200, $risk->message("注册成功，账号正在人工审核中，通过后即可登录"));
+        }
         return $this->json(200, '注册成功');
     }
 
@@ -275,6 +300,13 @@ class Authentication extends User
     {
         hook(Hook::USER_API_AUTH_LOGIN_BEGIN);
 
+        //登录爆破/撞库限流：验证码已改为一次性（见 Captcha::check），此处再加频率闸。
+        //按来源 IP 计数，挡住单一来源的横向喷洒；成功登录后清零。
+        $ip = Client::getAddress();
+        if (Throttle::tooMany("login:ip:{$ip}", 30, 300)) {
+            throw new JSONException("登录尝试过于频繁，请稍后再试");
+        }
+
         $loginVerification = (int)Config::get("login_verification");
 
         if ($loginVerification == 1 && (!isset($_POST['captcha']) || !Captcha::check((int)$_POST['captcha'], "login"))) {
@@ -283,6 +315,13 @@ class Authentication extends User
 
         if (!isset($_POST['username'])) {
             throw new JSONException("用户名输入错误");
+        }
+
+        //按「账号+IP」再加一道，挡住盯着某个账号猛试的爆破（跨 IP 分布式仍靠上面的 IP 闸兜底）
+        $username = (string)$_POST['username'];
+        $userThrottleKey = "login:user:" . md5(strtolower(trim($username))) . ":{$ip}";
+        if (Throttle::tooMany($userThrottleKey, 10, 300)) {
+            throw new JSONException("登录尝试过于频繁，请稍后再试");
         }
 
         //验证密码
@@ -296,14 +335,18 @@ class Authentication extends User
             ?? \App\Model\User::query()->where("phone", $_POST['username'])->first();
 
         if (!$user) {
+            $this->loginFail((string)$_POST['username'], "not_found");
             throw new JSONException("用户不存在");
         }
 
-        if (Str::generatePassword($_POST['password'], $user->salt) != $user->password) {
+        //verifyPassword 内含旧清洗管线的兼容比对：老账号的特殊字符密码当年哈希的是转义形态（#833）
+        if (!Str::verifyPassword((string)$user->password, (string)$user->salt, (string)$_POST['password'], (string)$this->request->unsafePost('password'))) {
+            $this->loginFail((string)$_POST['username'], "password");
             throw new JSONException("密码错误");
         }
 
         if ($user->status == 0) {
+            $this->loginFail((string)$_POST['username'], "banned");
             throw new JSONException("您已被封禁");
         }
 
@@ -311,8 +354,25 @@ class Authentication extends User
 
         $this->sso->loginSuccess($user, $remember);
 
+        //登录成功，清空该 IP / 账号的失败计数，避免影响后续正常登录
+        Throttle::clear("login:ip:{$ip}");
+        Throttle::clear($userThrottleKey);
+
         Captcha::destroy("login");
         return $this->json(200, "登录成功");
+    }
+
+    /**
+     * 登录失败通知点位（钩子异常不影响原有失败流程）
+     * @param string $account
+     * @param string $reason not_found|password|banned
+     */
+    private function loginFail(string $account, string $reason): void
+    {
+        try {
+            hook(Hook::USER_API_AUTH_LOGIN_FAIL, $account, $reason);
+        } catch (\Throwable $e) {
+        }
     }
 
     /**
@@ -323,6 +383,28 @@ class Authentication extends User
     public function password(): array
     {
         $forgetType = (int)Config::get("forget_type");
+
+        //风控判决。刻意放在验证码校验**之前** —— 拒绝时不该白白消耗掉
+        //用户手里那条邮件/短信验证码，也不该替攻击者把站长的短信费烧掉。
+        $riskAccount = (string)($_POST['username'] ?? '');
+        $risk = new \App\Entity\RiskContext('password');
+        hook(Hook::USER_API_AUTH_PASSWORD_BEGIN, $risk, $riskAccount);
+        if ($risk->denied() || $risk->held()) {
+            throw new JSONException($risk->message("操作过于频繁，请稍后再试"));
+        }
+
+        //找回密码是账号接管的高价值面：验证码校验侧原本无任何尝试限制，6 位码可在 300s 窗口内无限爆破。
+        //风控插件（可被停用）不可依赖，这里加硬性双维度限流：IP 维度挡单点喷洒；目标维度**不含 IP**，
+        //杜绝分布式 IP 绕过。触限即销毁该目标的找回验证码，使已发出的码立即失效，攻击者必须重新发码
+        //（发码侧有 60s 冷却 + 图形验证码）。（F-32）
+        $ip = Client::getAddress();
+        $forgetTargetKey = "forget:target:" . md5(strtolower(trim($riskAccount)));
+        if (Throttle::tooMany("forget:ip:{$ip}", 30, 300) || Throttle::tooMany($forgetTargetKey, 10, 600)) {
+            $forgetType == 0
+                ? $this->email->destroyCaptcha($riskAccount, Email::CAPTCHA_FORGET)
+                : $this->sms->destroyCaptcha($riskAccount, Sms::CAPTCHA_FORGET);
+            throw new JSONException("尝试过于频繁，请稍后再试");
+        }
 
         if (!isset($_POST['password']) || !Validation::password((string)$_POST['password'])) {
             throw new JSONException("密码最少6位");
@@ -349,8 +431,17 @@ class Authentication extends User
             $this->sms->destroyCaptcha($_POST['username'], Sms::CAPTCHA_FORGET);
         }
 
+        //账号在「发码后、提交前」被删会让 $user 为 null（低危 500 面），给出通用错误而非崩溃。
+        if (!$user) {
+            throw new JSONException("账号异常，请重新发起找回");
+        }
+
         $user->password = Str::generatePassword($_POST['password'], $user->salt);
         $user->save();
+
+        //成功即清零两个维度的失败计数，避免误伤本人后续操作。
+        Throttle::clear("forget:ip:{$ip}");
+        Throttle::clear($forgetTargetKey);
 
         return $this->json(200, "密码重置成功");
     }

@@ -40,6 +40,11 @@ class Upload extends User
         $type = strtolower((string)$request->get("mime"));
         $thumbHeight = (int)$request->get("thumb_height");
 
+        //前端上传地址永远带 ?mime=；到这里为空基本都是服务器环境把 URL 参数吞了（issue #794）
+        if ($type === '') {
+            throw new JSONException("上传参数丢失：服务器未收到 mime 参数，请检查伪静态规则(try_files 是否带 \$args)、WAF 或 CDN 是否丢弃了链接参数");
+        }
+
         if (!in_array($type, self::MIME)) {
             throw new JSONException("mime not supported");
         }
@@ -58,7 +63,12 @@ class Upload extends User
             File::remove(BASE_PATH . $fileName);
             $fileName = $tmp;
         } else {
-            $this->upload->add($fileName, $type, $this->getUser()->id);
+            //落库失败只可能是撞了全局唯一键(同一张图别人传过)：复用那份文件，别把 500 抛给前端
+            $shared = $this->upload->add($fileName, $type, $this->getUser()->id);
+            if ($shared !== null && $shared !== $fileName) {
+                File::remove(BASE_PATH . $fileName);
+                $fileName = $shared;
+            }
         }
 
         $append = [];
@@ -68,7 +78,8 @@ class Upload extends User
             $thumbUrl = $this->image->createThumbnail($fileName, $thumbHeight);
             if (!$thumbUrl) {
                 if (is_file($imageFile)) {
-                    $this->upload->remove($fileName);
+                    //按归属删除：$fileName 经全局去重可能已指向他人文件，只删本人的记录+文件
+                    $this->upload->remove($fileName, $this->getUser()->id);
                 }
                 throw new JSONException("图片上传失败，原因：生成缩略图失败");
             }

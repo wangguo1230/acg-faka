@@ -5,6 +5,7 @@ namespace App\Service;
 
 
 use App\Model\Commodity;
+use App\Model\PriceTemplate;
 use Kernel\Annotation\Bind;
 
 #[Bind(class: \App\Service\Bind\Shared::class)]
@@ -125,6 +126,19 @@ interface Shared
 
 
     /**
+     * 按加价模板计算接入商品的整套价格，返回结构与 AdjustmentPrice 一致并多出 level_price
+     *
+     * @param PriceTemplate $template
+     * @param string $config
+     * @param string $price
+     * @param string $userPrice
+     * @param string $levelPrice
+     * @return array
+     */
+    public function AdjustmentTemplate(PriceTemplate $template, string $config, string $price, string $userPrice, string $levelPrice = ''): array;
+
+
+    /**
      * @param int $type
      * @param float $premium
      * @param string|int|float $amount
@@ -132,10 +146,28 @@ interface Shared
      */
     public function AdjustmentAmount(int $type, float $premium, string|int|float $amount): string;
 
+    /**
+     * 按商品自身的加价设置（固定/百分比/模板）折算一个附加金额，比如预选加价。
+     * 直接调 AdjustmentAmount 的地方要换成它 —— 那个方法不认模板，
+     * type=2 会掉进百分比分支并乘上为 0 的 premium，加价被静默抹平。
+     *
+     * @param \App\Model\Commodity|int $commodity
+     */
+    public function AdjustmentExtra(\App\Model\Commodity|int $commodity, string|int|float $amount): string;
+
 
     /**
      * @param Commodity|int $commodity
      * @return bool
      */
     public function syncRemoteItem(Commodity|int $commodity): bool;
+
+    /**
+     * 非种类商品在上游的拿货成本（已按汇率换算）。算不出来返回 null，调用方保持原值。
+     * @param \App\Model\Shared $shared
+     * @param Commodity $commodity 需带 shared_code
+     * @param array $remoteItem item() 的返回
+     * @return string|null
+     */
+    public function remoteCost(\App\Model\Shared $shared, Commodity $commodity, array $remoteItem): ?string;
 }
