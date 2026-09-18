@@ -33,6 +33,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Read app version
+        id: appver
+        run: |
+          VER=$(sed -nE "s/.*'version'[[:space:]]*=>[[:space:]]*'([^']+)'.*/\1/p" config/app.php | head -n1)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -40,8 +47,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.appver.outputs.version }}
+            type=raw,value=${{ steps.appver.outputs.version }}-${{ steps.appver.outputs.short_sha }}
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref_name == 'docker-deploy' || github.ref_name == github.event.repository.default_branch }}
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # pre-push 钩子：推送 docker-deploy / main 时，本地构建并推送生产镜像到 GHCR。
 # 已替代 GitHub Actions 远程自动构建（见 .github/workflows/docker-publish.yml 已停用触发）。
+# 镜像会打 latest（生产指针）以及 config/app.php 的版本 tag，见 docker/RELEASE.md。
 #
 # 设计取舍：镜像构建失败不阻断 git push（代码推送与镜像构建相互独立），
 # 但会醒目告警并提示手动补构建命令，避免误以为镜像已刷新。

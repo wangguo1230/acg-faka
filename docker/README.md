@@ -1,5 +1,8 @@
 # Docker 部署说明
 
+生产发布、版本 tag、回滚与跨版本升级约定见 **[RELEASE.md](./RELEASE.md)**。
+生产默认镜像是 `ghcr.io/wangguo1230/acg-faka:latest`；每次发布必须同时打 `X.Y.Z` 版本 tag。
+
 本项目的 Docker 编排包含三个服务：
 
 - `app`：PHP 8.2 + Apache，启用 `.htaccess` 伪静态。

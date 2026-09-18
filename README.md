@@ -83,6 +83,10 @@ location / {
 - 配置完成后，访问你的首页，即可开始安装
 - 安装完成后，后台地址是：`https://你的域名/admin`
 
+## Docker 生产
+
+生产默认跑 `ghcr.io/wangguo1230/acg-faka:latest`。每次发布必须同时打 `config/app.php` 的版本 tag（如 `3.5.4`、`3.7.6`），回滚钉 `ACG_IMAGE=ghcr.io/wangguo1230/acg-faka:X.Y.Z`。完整约定见 [docker/RELEASE.md](docker/RELEASE.md)。
+
 ## 更多支持
 - 交流QQ群：970103572
 - [Telegram](http://t.me/mcyofficial)
