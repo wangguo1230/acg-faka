@@ -149,15 +149,37 @@ try {
     }, true);
 
     if ($schema->hasTable('manage_session') && $schema->hasTable('manage')) {
+        $sessionTable = $db->getTablePrefix() . 'manage_session';
+        $fkNames = ['manage_session_ibfk_1', $db->getTablePrefix() . 'manage_session_ibfk_1'];
+        $fkExists = false;
         try {
-            $schema->table('manage_session', static function ($t) {
-                $t->foreign('manage_id', 'manage_session_ibfk_1')
-                    ->references('id')->on('manage')
-                    ->onDelete('cascade');
-            });
-            fwrite(STDOUT, "[migrate] manage_session 外键已添加\n");
-        } catch (\Throwable $e) {
-            fwrite(STDOUT, "[migrate] manage_session 外键跳过（" . $e->getMessage() . "）\n");
+            $rows = $db->select(
+                "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+                 WHERE CONSTRAINT_SCHEMA = DATABASE()
+                   AND TABLE_NAME = ?
+                   AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
+                [$sessionTable]
+            );
+            $have = [];
+            foreach ($rows as $row) {
+                $row = (array)$row;
+                $have[] = (string)($row['CONSTRAINT_NAME'] ?? $row['constraint_name'] ?? '');
+            }
+            $fkExists = array_intersect($fkNames, $have) !== [];
+        } catch (\Throwable) {
+            $fkExists = false;
+        }
+        if (!$fkExists) {
+            try {
+                $schema->table('manage_session', static function ($t) {
+                    $t->foreign('manage_id', 'manage_session_ibfk_1')
+                        ->references('id')->on('manage')
+                        ->onDelete('cascade');
+                });
+                fwrite(STDOUT, "[migrate] manage_session 外键已添加\n");
+            } catch (\Throwable $e) {
+                fwrite(STDOUT, "[migrate] manage_session 外键跳过（" . $e->getMessage() . "）\n");
+            }
         }
     }
 
@@ -202,7 +224,9 @@ try {
             'currency_symbol' => '¥',
             'currency_rate' => '1',
             'currency_decimals' => '2',
-            'csp_mode' => 'enforce',
+            // 老站升级默认 report：与 Csp::mode() 在键缺失时的行为一致。
+            // enforce 是全新安装 Install.sql 的值，套到存量站会拦主题/插件外链脚本。
+            'csp_mode' => 'report',
         ];
         foreach ($configDefaults as $key => $value) {
             try {
@@ -240,36 +264,78 @@ try {
         }
 
         $protected = ['id', 'handle', 'plugin', 'plugin_id', 'plugin_key', 'status', 'name', 'author', 'create_time', 'top'];
+        $readLegacyConfig = static function (string $handle) use ($payRoot, $protected): array {
+            $configFile = $payRoot . '/' . $handle . '/Config/Config.php';
+            $result = ['file' => is_file($configFile) && !is_link($configFile), 'ok' => false, 'values' => []];
+            if (!$result['file']) {
+                return $result;
+            }
+            $loaded = @include $configFile;
+            if (!is_array($loaded)) {
+                return $result;
+            }
+            $result['ok'] = true;
+            foreach ($loaded as $key => $value) {
+                $key = trim((string)$key);
+                if ($key === '' || in_array(strtolower($key), $protected, true)) {
+                    continue;
+                }
+                if (!is_scalar($value) && $value !== null) {
+                    continue;
+                }
+                $result['values'][$key] = (string)($value ?? '');
+            }
+            return $result;
+        };
+        $hasCredentials = static function (array $values): bool {
+            foreach ($values as $value) {
+                if (trim((string)$value) !== '') {
+                    return true;
+                }
+            }
+            return false;
+        };
 
         foreach (array_keys($handles) as $handle) {
             try {
+                $payCount = (int)$db->table('pay')->where('handle', $handle)->count();
+                $legacy = $readLegacyConfig($handle);
                 $existing = $db->table('pay_config')
                     ->where('handle', $handle)
                     ->orderBy('sort')
                     ->orderBy('id')
                     ->first();
 
+                if ($payCount > 0 && !$hasCredentials($legacy['values'])) {
+                    $stored = [];
+                    if ($existing) {
+                        $decoded = json_decode((string)$existing->config, true);
+                        $stored = is_array($decoded) ? $decoded : [];
+                    }
+                    if (!$hasCredentials($stored)) {
+                        if (!$legacy['file']) {
+                            throw new \RuntimeException('插件目录没有 Config.php，无法导入正在使用的支付配置');
+                        }
+                        if (!$legacy['ok']) {
+                            throw new \RuntimeException('Config.php 不是有效的 PHP 数组，拒绝绑定空凭据');
+                        }
+                        throw new \RuntimeException('Config.php 没有可用的商户字段，拒绝绑定空凭据');
+                    }
+                }
+
                 if ($existing) {
                     $configId = (int)$existing->id;
-                } else {
-                    $values = [];
-                    $configFile = $payRoot . '/' . $handle . '/Config/Config.php';
-                    if (is_file($configFile) && !is_link($configFile)) {
-                        $loaded = @include $configFile;
-                        if (is_array($loaded)) {
-                            foreach ($loaded as $key => $value) {
-                                $key = trim((string)$key);
-                                if ($key === '' || in_array(strtolower($key), $protected, true)) {
-                                    continue;
-                                }
-                                if (!is_scalar($value) && $value !== null) {
-                                    continue;
-                                }
-                                $values[$key] = (string)($value ?? '');
-                            }
-                        }
+                    $stored = json_decode((string)$existing->config, true);
+                    $stored = is_array($stored) ? $stored : [];
+                    if ($payCount > 0 && !$hasCredentials($stored) && $hasCredentials($legacy['values'])) {
+                        $db->table('pay_config')->where('id', $configId)->update([
+                            'config' => json_encode($legacy['values'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                            'update_time' => $now,
+                        ]);
+                        fwrite(STDOUT, "[migrate] 已用插件 {$handle} 的 Config.php 回填空配置 #{$configId}\n");
                     }
-
+                } else {
+                    $values = $legacy['ok'] ? $legacy['values'] : [];
                     $configId = $db->table('pay_config')->insertGetId([
                         'handle' => $handle,
                         'name' => '默认配置',
