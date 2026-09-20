@@ -86,6 +86,11 @@ if [ ! -f assets/cache/favicon.ico ]; then
 fi
 
 if [ ! -L favicon.ico ]; then
+    # 兼容旧版保存逻辑：它会用上传的图片把这个软链替换成普通文件，图片只留在容器可写层。
+    # 同一个容器重启时先把它迁进数据卷，再恢复软链（镜像里的 favicon.ico 本身就是软链，不会误伤）
+    if [ -f favicon.ico ] && [ -s favicon.ico ]; then
+        cp favicon.ico assets/cache/favicon.ico
+    fi
     rm -f favicon.ico
     ln -s assets/cache/favicon.ico favicon.ico
 fi
