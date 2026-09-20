@@ -61,6 +61,15 @@ class Bill extends Model
             throw new JSONException("非法操作");
         }
 
+        //金额精度总闸：余额/硬币列是 decimal(14,2)，但这里按 float 运算、由数据库隐式四舍五入回写。
+        //传入亚分金额（如 0.005）时，扣款方向下舍回原值、收款方向上进位成 0.01，形成「凭空造币」的
+        //四舍五入棘轮——转账自转、硬币兑现等路径皆可无限放大。这里拒绝任何超过两位小数的金额，
+        //一处堵死全部调用点（转账/提现/下单/充值/分成/退款）。用 %.8F 固定记数避免科学计数法误判。
+        $fixedAmount = sprintf('%.8F', $amount);
+        if (bccomp($fixedAmount, bcadd($fixedAmount, '0', 2), 8) !== 0) {
+            throw new JSONException("金额精度非法，最多支持两位小数");
+        }
+
         if (is_int($user) || is_string($user)) {
             $user = User::query()->find($user);
             if (!$user) {
