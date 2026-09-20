@@ -38,6 +38,7 @@ COPY docker/php.ini /usr/local/etc/php/conf.d/acg-faka.ini
 COPY docker/entrypoint.sh /usr/local/bin/acg-faka-entrypoint
 COPY docker/plugin-heal.php /usr/local/bin/acg-faka-plugin-heal.php
 COPY docker/migrate.php /usr/local/bin/acg-faka-migrate.php
+COPY docker/healthcheck.php /usr/local/bin/acg-faka-healthcheck.php
 
 RUN mkdir -p \
         /usr/local/share/acg-faka \
@@ -71,6 +72,9 @@ RUN mkdir -p \
     && chmod +x /usr/local/bin/acg-faka-entrypoint
 
 EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD ["php", "/usr/local/bin/acg-faka-healthcheck.php"]
 
 ENTRYPOINT ["acg-faka-entrypoint"]
 CMD ["apache2-foreground"]

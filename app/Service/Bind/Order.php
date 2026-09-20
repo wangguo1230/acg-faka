@@ -26,7 +26,6 @@ use App\Util\Date;
 use App\Util\Ini;
 use App\Util\PayConfig;
 use App\Util\PayFactory;
-use App\Util\PayProfile;
 use App\Util\Str;
 use Illuminate\Database\Capsule\Manager as DB;
 use Kernel\Annotation\Inject;
@@ -1197,25 +1196,8 @@ class Order implements \App\Service\Order
     public function callback(string $tradeNo, array $map): string
     {
         $tradeNo = Firewall::inst()->xssKiller($tradeNo);
-
-        if (!self::isCallbackTradeNo($tradeNo)) {
-            self::callbackFail('', "handle", self::CALLBACK_REJECT, null, $map);
-        }
-
-        $order = \App\Model\Order::with(['pay'])->where("trade_no", $tradeNo)->first();
-
-        if (!$order || !$order->pay) {
-            self::callbackFail('', "not_found", self::CALLBACK_REJECT, $tradeNo, $map);
-        }
-
+        [$order, $payConfig] = \App\Util\LegacyPayCallback::resolve($tradeNo, $map);
         $handle = (string)$order->pay->handle;
-
-        try {
-            $payConfig = PayProfile::config($order->pay);
-        } catch (JSONException $e) {
-            self::callbackFail($handle, "config", self::CALLBACK_REJECT, $tradeNo, $map, "支付配置不存在，无法验签：" . $e->getMessage());
-            return self::CALLBACK_REJECT;
-        }
 
         $callback = $this->callbackInitialize($order->pay, $map, $payConfig);
 
@@ -1227,14 +1209,10 @@ class Order implements \App\Service\Order
         $tradeNo = (string)$order->trade_no;
         DB::connection()->getPdo()->exec("set session transaction isolation level serializable");
         DB::transaction(function () use ($handle, $map, $callback, $tradeNo) {
-            $order = \App\Model\Order::query()->where("trade_no", $tradeNo)->first();
+            $order = \App\Model\Order::query()->where("trade_no", $tradeNo)->lockForUpdate()->first();
             if (!$order) {
                 self::callbackFail($handle, "not_found", self::CALLBACK_REJECT, $tradeNo, $map, "订单不存在");
             }
-            if ((int)$order->status !== 0) {
-                self::callbackFail($handle, "duplicate", self::CALLBACK_REJECT, $tradeNo, $map, "重复通知，当前订单已支付");
-            }
-
             $paidAmount = $callback['amount'] ?? null;
             if (!is_scalar($paidAmount) || !is_numeric((string)$paidAmount)) {
                 self::callbackFail($handle, "amount", self::CALLBACK_REJECT, $tradeNo, $map, "回调金额不是合法数字");
@@ -1245,6 +1223,13 @@ class Order implements \App\Service\Order
             $actualAmount = (new Decimal((string)$paidAmount, 2))->getAmount();
             if (!hash_equals($expectAmount, $actualAmount)) {
                 self::callbackFail($handle, "amount", self::CALLBACK_REJECT, $tradeNo, $map, "订单金额不匹配");
+            }
+
+            if ((int)$order->status === 1) {
+                return; // Authenticated retries are acknowledged without repeating delivery or credit.
+            }
+            if ((int)$order->status !== 0) {
+                self::callbackFail($handle, "status", self::CALLBACK_REJECT, $tradeNo, $map);
             }
 
             if ($order->owner != 0 && $owner = User::query()->find($order->owner)) {

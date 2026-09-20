@@ -408,7 +408,14 @@ class Pay implements \App\Service\Pay
                 throw new JSONException('支付插件置顶状态格式错误');
             }
             unset($config['top']);
-            setConfig(['top' => (int)$top], $this->pluginConfigFilePath($configDirectory));
+            $configPath = $this->pluginConfigFilePath($configDirectory);
+            \App\Util\Opcache::invalidate($configPath);
+            $legacyValues = is_file($configPath) ? require($configPath) : [];
+            if (!is_array($legacyValues)) {
+                throw new JSONException('原支付配置文件损坏，拒绝覆盖');
+            }
+            $legacyValues['top'] = (int)$top;
+            setConfig($legacyValues, $configPath);
         }
 
         if ($config === []) {

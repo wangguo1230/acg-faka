@@ -768,4 +768,20 @@ CREATE TABLE `__PREFIX__lang` (
                                   INDEX `idx_lang_status`(`lang` ASC, `status` ASC) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=1 CHARACTER SET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=DYNAMIC;
 
+CREATE TABLE `__PREFIX__docker_migration` (
+    `version` varchar(128) NOT NULL,
+    `completed_at` datetime NOT NULL,
+    PRIMARY KEY (`version`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `__PREFIX__pay_legacy_callback` (
+    `pay_id` int UNSIGNED NOT NULL,
+    `handle` varchar(64) NOT NULL,
+    `config` mediumtext NOT NULL,
+    `order_max_id` int UNSIGNED NOT NULL DEFAULT 0,
+    `recharge_max_id` int UNSIGNED NOT NULL DEFAULT 0,
+    `create_time` datetime NOT NULL,
+    PRIMARY KEY (`pay_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SET FOREIGN_KEY_CHECKS = 1;

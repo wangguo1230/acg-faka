@@ -28,22 +28,59 @@ try {
 
     $dbConfig = config('database');
     if (!$dbConfig || empty($dbConfig['host'])) {
-        fwrite(STDOUT, "[migrate] 无数据库配置，跳过\n");
-        exit(0);
+        throw new \RuntimeException('已安装站点缺少数据库配置');
     }
 
     $capsule = new \Illuminate\Database\Capsule\Manager();
+    $dbConfig['options'][PDO::ATTR_TIMEOUT] = 3;
     $capsule->addConnection($dbConfig);
     $capsule->setAsGlobal();
     $capsule->bootEloquent();
-    $capsule->getConnection()->getPdo();
+    $db = $capsule->getConnection();
+    $wait = getenv('ACG_DB_WAIT_SECONDS');
+    $deadline = time() + max(0, min(120, $wait === false ? 30 : (int)$wait));
+    do {
+        try {
+            $db->getPdo();
+            break;
+        } catch (\Throwable $e) {
+            if (time() >= $deadline) {
+                throw new \RuntimeException('数据库尚未就绪，请检查连接配置和网络', 0, $e);
+            }
+            sleep(1);
+        }
+    } while (true);
 
     $schema = $capsule->schema();
     $db = $capsule->getConnection();
-    $now = date('Y-m-d H:i:s');
+    foreach (['config', 'manage', 'order', 'user_recharge', 'pay', 'commodity', 'shared', 'user_commodity'] as $table) {
+        if (!$schema->hasTable($table)) {
+            throw new \RuntimeException("旧站必需表 {$table} 不存在，请核对数据库及表前缀");
+        }
+    }
+    if (in_array('--check', $argv, true)) {
+        $result = (new \App\Util\PaymentUpgrade($db, false))->run();
+        foreach ($result['messages'] as $message) {
+            fwrite(STDOUT, "[check] 计划：{$message}\n");
+        }
+        foreach ($result['errors'] as $message) {
+            fwrite(STDERR, "[check] {$message}\n");
+        }
+        fwrite(STDOUT, "[check] 只读预检完成；DDL 权限与网关支付需在副本验收\n");
+        exit($result['errors'] === [] ? 0 : 1);
+    }
 
-    $addColumn = static function (string $table, string $column, callable $define, bool $critical = false) use ($schema, &$fatal): void {
-        if (!$schema->hasTable($table) || $schema->hasColumn($table, $column)) {
+    $lockName = 'acg-upgrade-' . substr(hash('sha256', $db->getDatabaseName() . ':' . $db->getTablePrefix()), 0, 40);
+    $lock = (array)$db->selectOne('SELECT GET_LOCK(?, 30) AS acquired', [$lockName]);
+    if ((int)($lock['acquired'] ?? 0) !== 1) {
+        throw new \RuntimeException('无法取得升级锁，请等待另一迁移任务完成');
+    }
+    register_shutdown_function(static function () use ($db, $lockName): void {
+        try { $db->selectOne('SELECT RELEASE_LOCK(?)', [$lockName]); } catch (\Throwable) {}
+    });
+
+    $addColumn = static function (string $table, string $column, callable $define, bool $critical = true) use ($schema, &$fatal): void {
+        if ($schema->hasColumn($table, $column)) {
             return;
         }
         try {
@@ -58,7 +95,7 @@ try {
         }
     };
 
-    $createTable = static function (string $table, callable $define, bool $critical = false) use ($schema, &$fatal): bool {
+    $createTable = static function (string $table, callable $define, bool $critical = true) use ($schema, &$fatal): bool {
         if ($schema->hasTable($table)) {
             return true;
         }
@@ -210,6 +247,19 @@ try {
         $t->dateTime('create_time');
     });
 
+    $createTable(\App\Util\PaymentUpgrade::MIGRATIONS, static function ($t) {
+        $t->string('version', 128)->primary();
+        $t->dateTime('completed_at');
+    });
+    $createTable(\App\Util\LegacyPayCallback::TABLE, static function ($t) {
+        $t->unsignedInteger('pay_id')->primary();
+        $t->string('handle', 64);
+        $t->mediumText('config');
+        $t->unsignedInteger('order_max_id')->default(0);
+        $t->unsignedInteger('recharge_max_id')->default(0);
+        $t->dateTime('create_time');
+    });
+
     // —— 新配置键（缺了 Config::get 会返回空串，多数有代码兜底，这里补上以免后台表单空白）——
     if ($schema->hasTable('config')) {
         $configDefaults = [
@@ -235,142 +285,17 @@ try {
                     fwrite(STDOUT, "[migrate] config.{$key} 已写入默认值\n");
                 }
             } catch (\Throwable $e) {
-                fwrite(STDERR, "[migrate] config.{$key} 失败：" . $e->getMessage() . "\n");
+                $fatal[] = "config.{$key} 写入失败";
             }
         }
     }
 
-    // —— 把旧 Config.php 导入 pay_config，并绑到尚未选择配置的支付接口 ——
-    if (!$schema->hasTable('pay_config') || !$schema->hasTable('pay') || !$schema->hasColumn('pay', 'pay_config_id')) {
-        $fatal[] = '[migrate] 支付配置表或 pay.pay_config_id 不存在，无法完成绑定';
-    } else {
-        $handles = [];
-        foreach ($db->table('pay')->select('handle')->distinct()->pluck('handle') as $handle) {
-            $handle = (string)$handle;
-            if ($handle !== '' && $handle !== '#system') {
-                $handles[$handle] = true;
-            }
+    if ($fatal === []) {
+        $result = (new \App\Util\PaymentUpgrade($db))->run();
+        foreach ($result['messages'] as $message) {
+            fwrite(STDOUT, "[migrate] {$message}\n");
         }
-        $payRoot = BASE_PATH . '/app/Pay';
-        if (is_dir($payRoot)) {
-            foreach (scandir($payRoot) ?: [] as $name) {
-                if (!preg_match('/^[A-Za-z][A-Za-z0-9_-]{0,63}$/', $name)) {
-                    continue;
-                }
-                if (is_dir($payRoot . '/' . $name . '/Config')) {
-                    $handles[$name] = true;
-                }
-            }
-        }
-
-        $protected = ['id', 'handle', 'plugin', 'plugin_id', 'plugin_key', 'status', 'name', 'author', 'create_time', 'top'];
-        $readLegacyConfig = static function (string $handle) use ($payRoot, $protected): array {
-            $configFile = $payRoot . '/' . $handle . '/Config/Config.php';
-            $result = ['file' => is_file($configFile) && !is_link($configFile), 'ok' => false, 'values' => []];
-            if (!$result['file']) {
-                return $result;
-            }
-            $loaded = @include $configFile;
-            if (!is_array($loaded)) {
-                return $result;
-            }
-            $result['ok'] = true;
-            foreach ($loaded as $key => $value) {
-                $key = trim((string)$key);
-                if ($key === '' || in_array(strtolower($key), $protected, true)) {
-                    continue;
-                }
-                if (!is_scalar($value) && $value !== null) {
-                    continue;
-                }
-                $result['values'][$key] = (string)($value ?? '');
-            }
-            return $result;
-        };
-        $hasCredentials = static function (array $values): bool {
-            foreach ($values as $value) {
-                if (trim((string)$value) !== '') {
-                    return true;
-                }
-            }
-            return false;
-        };
-
-        foreach (array_keys($handles) as $handle) {
-            try {
-                $payCount = (int)$db->table('pay')->where('handle', $handle)->count();
-                $legacy = $readLegacyConfig($handle);
-                $existing = $db->table('pay_config')
-                    ->where('handle', $handle)
-                    ->orderBy('sort')
-                    ->orderBy('id')
-                    ->first();
-
-                if ($payCount > 0 && !$hasCredentials($legacy['values'])) {
-                    $stored = [];
-                    if ($existing) {
-                        $decoded = json_decode((string)$existing->config, true);
-                        $stored = is_array($decoded) ? $decoded : [];
-                    }
-                    if (!$hasCredentials($stored)) {
-                        if (!$legacy['file']) {
-                            throw new \RuntimeException('插件目录没有 Config.php，无法导入正在使用的支付配置');
-                        }
-                        if (!$legacy['ok']) {
-                            throw new \RuntimeException('Config.php 不是有效的 PHP 数组，拒绝绑定空凭据');
-                        }
-                        throw new \RuntimeException('Config.php 没有可用的商户字段，拒绝绑定空凭据');
-                    }
-                }
-
-                if ($existing) {
-                    $configId = (int)$existing->id;
-                    $stored = json_decode((string)$existing->config, true);
-                    $stored = is_array($stored) ? $stored : [];
-                    if ($payCount > 0 && !$hasCredentials($stored) && $hasCredentials($legacy['values'])) {
-                        $db->table('pay_config')->where('id', $configId)->update([
-                            'config' => json_encode($legacy['values'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                            'update_time' => $now,
-                        ]);
-                        fwrite(STDOUT, "[migrate] 已用插件 {$handle} 的 Config.php 回填空配置 #{$configId}\n");
-                    }
-                } else {
-                    $values = $legacy['ok'] ? $legacy['values'] : [];
-                    $configId = $db->table('pay_config')->insertGetId([
-                        'handle' => $handle,
-                        'name' => '默认配置',
-                        'config' => json_encode($values, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                        'sort' => 0,
-                        'create_time' => $now,
-                        'update_time' => $now,
-                    ]);
-                    fwrite(STDOUT, "[migrate] 已从插件 {$handle} 导入默认支付配置 #{$configId}\n");
-                }
-
-                $validIds = $db->table('pay_config')->where('handle', $handle)->pluck('id')->all();
-                $query = $db->table('pay')->where('handle', $handle);
-                if ($validIds !== []) {
-                    $query->where(function ($q) use ($validIds) {
-                        $q->where('pay_config_id', 0)->orWhereNotIn('pay_config_id', $validIds);
-                    });
-                } else {
-                    $query->where('pay_config_id', 0);
-                }
-                $bound = $query->update(['pay_config_id' => $configId]);
-                if ($bound > 0) {
-                    fwrite(STDOUT, "[migrate] 已为插件 {$handle} 绑定 {$bound} 个支付接口到配置 #{$configId}\n");
-                }
-            } catch (\Throwable $e) {
-                $msg = "[migrate] 插件 {$handle} 支付配置迁移失败：" . $e->getMessage();
-                fwrite(STDERR, $msg . "\n");
-                $fatal[] = $msg;
-            }
-        }
-
-        $unbound = (int)$db->table('pay')->where('handle', '<>', '#system')->where('pay_config_id', 0)->count();
-        if ($unbound > 0) {
-            $fatal[] = "[migrate] 仍有 {$unbound} 个支付接口 pay_config_id=0";
-        }
+        $fatal = array_merge($fatal, $result['errors']);
     }
 
     if ($fatal !== []) {
@@ -378,6 +303,15 @@ try {
         exit(1);
     }
 
+    $db->table(\App\Util\PaymentUpgrade::MIGRATIONS)->updateOrInsert(
+        ['version' => \App\Util\PaymentUpgrade::VERSION],
+        ['completed_at' => date('Y-m-d H:i:s')]
+    );
+    // DB defaults were inserted directly; discard only the derived config cache.
+    $configCache = BASE_PATH . '/runtime/config';
+    if (is_file($configCache) && !unlink($configCache)) {
+        throw new \RuntimeException('无法刷新配置缓存，请检查 runtime 权限');
+    }
     fwrite(STDOUT, "[migrate] 完成\n");
 } catch (\Throwable $e) {
     fwrite(STDERR, "[migrate] 失败（" . $e->getMessage() . "）\n");

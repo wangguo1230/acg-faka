@@ -2,7 +2,7 @@
 # 生产默认跑 latest（移动指针）。每次发布必须同时打 X.Y.Z 版本 tag，见 docker/RELEASE.md。
 # 启动：docker compose -f docker-compose.prod.yml up -d
 # 更新：docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
-# 回滚：ACG_IMAGE=ghcr.io/wangguo1230/acg-faka:3.5.4 docker compose -f docker-compose.prod.yml pull && up -d
+# 跨版本升级及回滚：见 docker/UPGRADE-3.7.6.md；新版产生订单后使用兼容回滚镜像。
 services:
   app:
     image: ${ACG_IMAGE:-ghcr.io/wangguo1230/acg-faka:latest}

@@ -21,17 +21,58 @@ mkdir -p \
     runtime/view \
     runtime/waf
 
+# 当提供数据库环境变量、且 config/database.php 仍是发行版自带的 demo 占位配置时，
+# 用环境变量预置数据库连接，方便对接外部 MySQL（如 1Panel）。真实安装后的配置不会被覆盖。
+if [ -n "${DB_HOST:-}" ] && { [ ! -f config/database.php ] || grep -q "'database' => 'demo'" config/database.php; }; then
+    cat > config/database.php <<EOF
+<?php
+declare (strict_types=1);
+
+return [
+    'driver' => 'mysql',
+    'host' => '${DB_HOST}',
+    'database' => '${DB_DATABASE:-acg-faka}',
+    'username' => '${DB_USERNAME:-acg-faka}',
+    'password' => '${DB_PASSWORD:-}',
+    'charset' => 'utf8mb4',
+    'collation' => 'utf8mb4_unicode_ci',
+    'prefix' => '${DB_PREFIX:-acg_}',
+];
+EOF
+fi
+
+
+# 迁移成功后才刷新卷内代码，失败时保留旧站的主题与版本配置。
+chown -R www-data:www-data config runtime app/Pay kernel/Install
+
+# 启动迁移：补齐 3.7.x 表/列，并把旧支付 Config.php 导入 pay_config。
+# 关键迁移失败必须阻断启动，避免容器“健康”但支付/后台已不可用。
+if [ -f kernel/Install/Lock ]; then
+    if ! su -s /bin/sh www-data -c "php /usr/local/bin/acg-faka-migrate.php"; then
+        echo "[entrypoint] 数据库迁移失败，拒绝启动" >&2
+        exit 1
+    fi
+fi
+
 # 内置主题跟随镜像更新：named volume 只在首次创建时从镜像拷贝内容，之后会
 # 一直遮住镜像里的新模板。每次启动时从镜像预留的纯净副本整目录替换内置主题
 #（避免残留已删除的旧文件），目录名不同的用户自装主题不受影响。
-# 注意：仅同步 app/View/User/Theme 与 runtime/view，app/Pay、app/Plugin
-# 等运行期安装的支付/功能插件卷不做任何改动。
+# 支付插件卷保持原样；功能插件按下方规则保留配置后更新内置代码。
 if [ -d /usr/local/share/acg-faka/Theme ]; then
     for theme_src in /usr/local/share/acg-faka/Theme/*/; do
         [ -d "$theme_src" ] || continue
         theme_name=$(basename "$theme_src")
+        theme_keep=""
+        if [ -f "app/View/User/Theme/${theme_name}/Setting.php" ]; then
+            theme_keep=$(mktemp)
+            cp "app/View/User/Theme/${theme_name}/Setting.php" "$theme_keep"
+        fi
         rm -rf "app/View/User/Theme/${theme_name}"
         cp -a "$theme_src" "app/View/User/Theme/${theme_name}"
+        if [ -n "$theme_keep" ]; then
+            cp "$theme_keep" "app/View/User/Theme/${theme_name}/Setting.php"
+            rm -f "$theme_keep"
+        fi
     done
     # 模板已可能变更，清空编译缓存让模板引擎按需重新编译
     rm -rf runtime/view/compile runtime/view/cache
@@ -112,25 +153,6 @@ session.save_handler = redis
 session.save_path = "tcp://${REDIS_HOST}:${REDIS_PORT}?${SESSION_QUERY}"
 EOF
 
-# 当提供数据库环境变量、且 config/database.php 仍是发行版自带的 demo 占位配置时，
-# 用环境变量预置数据库连接，方便对接外部 MySQL（如 1Panel）。真实安装后的配置不会被覆盖。
-if [ -n "${DB_HOST:-}" ] && { [ ! -f config/database.php ] || grep -q "'database' => 'demo'" config/database.php; }; then
-    cat > config/database.php <<EOF
-<?php
-declare (strict_types=1);
-
-return [
-    'driver' => 'mysql',
-    'host' => '${DB_HOST}',
-    'database' => '${DB_DATABASE:-acg-faka}',
-    'username' => '${DB_USERNAME:-acg-faka}',
-    'password' => '${DB_PASSWORD:-}',
-    'charset' => 'utf8mb4',
-    'collation' => 'utf8mb4_unicode_ci',
-    'prefix' => '${DB_PREFIX:-acg_}',
-];
-EOF
-fi
 
 chown -R www-data:www-data \
     assets/cache \
@@ -140,15 +162,6 @@ chown -R www-data:www-data \
     config \
     kernel/Install \
     runtime
-
-# 启动迁移：补齐 3.7.x 表/列，并把旧支付 Config.php 导入 pay_config。
-# 关键迁移失败必须阻断启动，避免容器“健康”但支付/后台已不可用。
-if [ -f kernel/Install/Lock ]; then
-    if ! su -s /bin/sh www-data -c "php /usr/local/bin/acg-faka-migrate.php"; then
-        echo "[entrypoint] 数据库迁移失败，拒绝启动" >&2
-        exit 1
-    fi
-fi
 
 # 内置插件自愈：对 Config.php 中标记为启用(STATUS=1)的插件，在每次启动时以 www-data
 # 身份重建 hook 缓存。加密引擎 _plugin_start 无法正常启用自建插件、或换宿主机导致

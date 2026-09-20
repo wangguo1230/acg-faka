@@ -17,7 +17,6 @@ use App\Util\Client;
 use App\Util\Currency;
 use App\Util\Date;
 use App\Util\PayFactory;
-use App\Util\PayProfile;
 use App\Util\Str;
 use Illuminate\Database\Capsule\Manager as DB;
 use Kernel\Annotation\Inject;
@@ -107,7 +106,7 @@ class Recharge implements \App\Service\Recharge
                 (string)$order->trade_no,
                 (float)$order->gateway_amount,
                 $callbackDomain . '/user/api/rechargeNotification/callback.' . $order->trade_no,
-                $callbackDomain . '/user/recharge/index',
+                $clientDomain . '/user/recharge/index',
                 (string)$order->create_ip
             );
             $trade = $payObject->trade();
@@ -157,26 +156,8 @@ class Recharge implements \App\Service\Recharge
         $reject = \App\Service\Bind\Order::CALLBACK_REJECT;
         $tradeNo = Firewall::inst()->xssKiller($tradeNo);
 
-        //与商品订单回调完全同构：URL带的就是订单号，按插件名寻址已彻底移除
-        if (!\App\Service\Bind\Order::isCallbackTradeNo($tradeNo)) {
-            \App\Service\Bind\Order::callbackFail('', "handle", $reject, null, $map, null, "CALLBACK-RECHARGE");
-        }
-
-        $order = UserRecharge::with(['pay'])->where("trade_no", $tradeNo)->first();
-
-        if (!$order || !$order->pay) {
-            \App\Service\Bind\Order::callbackFail('', "not_found", $reject, $tradeNo, $map, null, "CALLBACK-RECHARGE");
-        }
-
+        [$order, $payConfig] = \App\Util\LegacyPayCallback::resolve($tradeNo, $map, true);
         $handle = (string)$order->pay->handle;
-
-        //这笔充值当初用的是哪套配置，就用哪套验签
-        try {
-            $payConfig = PayProfile::config($order->pay);
-        } catch (JSONException $e) {
-            \App\Service\Bind\Order::callbackFail($handle, "config", $reject, $tradeNo, $map, "支付配置不存在，无法验签：" . $e->getMessage(), "CALLBACK-RECHARGE");
-            return $reject; //callbackFail 必然抛出，这行只为静态分析
-        }
 
         $callback = $this->order->callbackInitialize($order->pay, $map, $payConfig);
 
@@ -193,14 +174,10 @@ class Recharge implements \App\Service\Recharge
         DB::connection()->getPdo()->exec("set session transaction isolation level serializable");
         DB::transaction(function () use ($handle, $map, $callback, $tradeNo, $reject) {
             //获取订单
-            $order = UserRecharge::query()->where("trade_no", $tradeNo)->first();
+            $order = UserRecharge::query()->where("trade_no", $tradeNo)->lockForUpdate()->first();
 
             if (!$order) {
                 \App\Service\Bind\Order::callbackFail($handle, "not_found", $reject, $tradeNo, $map, "订单不存在", "CALLBACK-RECHARGE");
-            }
-
-            if ((int)$order->status !== 0) {
-                \App\Service\Bind\Order::callbackFail($handle, "duplicate", $reject, $tradeNo, $map, "重复通知，当前订单已支付", "CALLBACK-RECHARGE");
             }
 
             //同商品订单：先卡类型再用 bcmath 精确比对，(float)数组==1.0 的坑不能踩
@@ -214,6 +191,13 @@ class Recharge implements \App\Service\Recharge
             $actualAmount = (new \Kernel\Util\Decimal((string)$paidAmount, 2))->getAmount();
             if (!hash_equals($expectAmount, $actualAmount)) {
                 \App\Service\Bind\Order::callbackFail($handle, "amount", $reject, $tradeNo, $map, "订单金额不匹配", "CALLBACK-RECHARGE");
+            }
+
+            if ((int)$order->status === 1) {
+                return;
+            }
+            if ((int)$order->status !== 0) {
+                \App\Service\Bind\Order::callbackFail($handle, "status", $reject, $tradeNo, $map);
             }
 
             //订单更新

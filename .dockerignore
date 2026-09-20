@@ -4,6 +4,8 @@
 .idea
 .vscode
 .spec-workflow
+tests
+**/__pycache__
 
 Dockerfile
 docker-compose*.yml

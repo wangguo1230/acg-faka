@@ -4,6 +4,8 @@
 
 版本号以 `config/app.php` 的 `version` 为准（当前镜像启动时会覆盖 named volume 里的这份文件）。
 
+3.5.4 → 3.7.6 的启动修复、隔离测试、在线预检、备份和兼容回滚命令见 [升级执行手册](UPGRADE-3.7.6.md)。新版产生订单后，原版 3.5.4 无法处理新版的数字订单号回调地址，必须使用手册中的专用兼容回滚镜像。
+
 ## 为什么必须打版本 tag
 
 2026-09-18 把 `main` 的 3.7.6 一次性合进停在 3.5.4 的 `docker-deploy`，并直接刷新了 `latest`。生产立刻出现：
@@ -35,16 +37,15 @@
 | `sha-<sha>` | 短提交 | 否 |
 | `docker-deploy` | 分支名 | 随分支移动 |
 
-生产 compose 默认拉 `latest`。回滚不要改 compose 里的默认值，临时钉死版本：
+生产 compose 默认拉 `latest`。回滚通过 `ACG_IMAGE` 固定为已验收的兼容镜像，镜像须预先加载或拉取：
 
 ```bash
-ACG_IMAGE=ghcr.io/wangguo1230/acg-faka:3.5.4 \
-  docker compose -f docker-compose.prod.yml pull
-ACG_IMAGE=ghcr.io/wangguo1230/acg-faka:3.5.4 \
-  docker compose -f docker-compose.prod.yml up -d
+: "${ACG_ROLLBACK_IMAGE:?请设置已验收的兼容回滚镜像}"
+ACG_IMAGE="$ACG_ROLLBACK_IMAGE" \
+  docker compose -f docker-compose.prod.yml up -d --no-deps --pull never app
 ```
 
-恢复跟踪最新后再去掉 `ACG_IMAGE`，重新 `pull && up -d`。
+将相同的 `ACG_IMAGE` 写入部署 `.env`，避免下次启动误回 `latest`。完成升级验收后，再按发布安排恢复跟踪最新版本。
 
 ## Git 标签
 
@@ -66,11 +67,11 @@ git push origin "v3.7.6"
 
 1. 对照 `kernel/Install/Install.sql`：新表、新列、需要回填的数据（尤其是支付配置）。
 2. 写进 `docker/migrate.php`，关键路径失败必须 `exit 1`，`entrypoint.sh` 不得 `|| true` 吞掉。
-3. 不要从 3.5.x 直接跳到 3.7.x；中间小版本的表结构也要能被当前迁移脚本一次补齐。
+3. 从 3.5.x 升级到 3.7.x 时，中间小版本的表结构及数据迁移必须由当前脚本一次补齐，并用旧库完成隔离回归。
 4. 发布前验证：后台登录、支付方式能列出、能下一单。三步不过，禁止移动 `latest`。
-5. 先确保旧版本已有镜像 tag（例如当前生产是 `3.5.4`），再构建新版本并移动 `latest`。
+5. 先构建并验收候选升级镜像和兼容回滚镜像，验证旧订单在升级后、新订单在回滚后都能收款发货，再发布生产镜像。
 
-回退到旧镜像时，3.7.x 多出来的列可以留着，3.5.4 代码会忽略它们。**不要 DROP 这些列**。没有建出来的新表（当时的事故现场）本来就不存在，旧代码也不依赖。
+回退到兼容镜像时，保留 3.7.x 新增的表列、配置和历史回调快照。**不要 DROP 这些列，也不要覆盖已产生新订单的数据库**。
 
 ## 发布与回滚命令
 
