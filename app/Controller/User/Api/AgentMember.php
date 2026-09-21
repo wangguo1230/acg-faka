@@ -142,6 +142,9 @@ class AgentMember extends User
             //达阈值：封号，且这一次不放行，避免"最后一次仍然得手"，也不占用配额。
             //封号后会话立即失效（UserSession 按 status==1 判定）。
             TransferHoneypot::ban($userId);
+            //风控流水留证：封禁点。查一次当前余额仅作快照，写失败不影响封禁。
+            $balance = (float)(\App\Model\User::query()->whereKey($userId)->value('balance') ?? 0);
+            $this->honeypotBill($userId, 0.0, $balance, sprintf("风控蜜罐：亚分自转达阈值 %d 次，账号已封禁", TransferHoneypot::limit()));
             throw new JSONException("账号已被风控系统限制，请联系客服");
         }
 
@@ -151,8 +154,10 @@ class AgentMember extends User
             throw new JSONException($denied);
         }
 
+        $before = 0.0;
+        $after = 0.0;
         DB::connection()->getPdo()->exec("set session transaction isolation level serializable");
-        Db::transaction(function () use ($userId, $amount): void {
+        Db::transaction(function () use ($userId, $amount, &$before, &$after): void {
             //自转铸币的正确复现：**单实例、扣款先落库、再回读被 decimal(14,2) 四舍五入后的值**，
             //然后加回。两步之间必须 refresh()——扣款的舍入要真正生效，收款才只在其基础上进位。
             //净收益 = 两次舍入误差之和 ∈ (-0.01, +0.01]，封顶 0.01（即原漏洞放行的那一分）。
@@ -169,6 +174,7 @@ class AgentMember extends User
             if ((float)$u->balance < $amount) {
                 throw new JSONException("余额不足");
             }
+            $before = (float)$u->balance;
 
             //第一步：扣款落库，由 decimal(14,2) 隐式四舍五入（亚分下舍，余额基本不变）。
             $u->balance = $u->balance - $amount;
@@ -177,8 +183,45 @@ class AgentMember extends User
             $u->refresh();
             $u->balance = $u->balance + $amount;
             $u->save();
+            $u->refresh();
+            $after = (float)$u->balance;
         });
 
+        //风控流水留证：命中一次记一条（时间/进位额/累计次数），出现在会员账单里可看全流程。
+        //放在事务提交后：直接插 bill（不走 Bill::create，否则被精度闸拦且会二次加钱），
+        //写失败不影响已成功的铸币，仅取证用。
+        $shown = rtrim(rtrim(sprintf('%.8F', $amount), '0'), '.');
+        $this->honeypotBill(
+            $userId,
+            $after - $before,
+            $after,
+            sprintf("风控蜜罐：亚分自转 %s，本次进位 +%s（第 %d 次尝试）", $shown, number_format($after - $before, 2), $count)
+        );
+
         return $this->json();
+    }
+
+    /**
+     * 直插一条余额账单记录，仅供转账蜜罐留证使用。
+     *
+     * 刻意**不走 Bill::create**：① 其精度闸会拒绝亚分金额；② 它会真的改动余额，
+     * 而蜜罐的余额已由 honeypot() 自行处理，再走一遍会二次加钱。这里只写流水、不碰余额。
+     * 字段与 Bill::create 保持一致（owner/amount/currency/balance/type/log/create_time）。
+     * 写失败吞掉：账单仅用于事后取证，绝不能因为记不上流水而回滚风控或影响响应。
+     */
+    private function honeypotBill(int $userId, float $amount, float $balance, string $log): void
+    {
+        try {
+            $bill = new \App\Model\Bill();
+            $bill->owner = $userId;
+            $bill->amount = $amount;
+            $bill->currency = 0;
+            $bill->balance = $balance;
+            $bill->type = \App\Model\Bill::TYPE_ADD;
+            $bill->log = $log;
+            $bill->create_time = \App\Util\Date::current();
+            $bill->save();
+        } catch (\Throwable) {
+        }
     }
 }

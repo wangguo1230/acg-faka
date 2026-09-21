@@ -197,16 +197,14 @@
             {label: i18n('待回复工单'), count: toNumber(todo?.ticket_num), href: '/admin/ticket/index', sub: ''}
         ];
 
-        // 风控封禁：只在抓到人时才占一行，平时不给站长添视觉噪音
+        // 风控封禁：始终显示（哪怕为 0），便于站长确认功能在线；点击跳用户管理用「仅风控封禁」筛选查看
         const riskNum = toNumber(todo?.risk_banned_num);
-        if (riskNum > 0) {
-            items.push({
-                label: i18n('风控封禁会员'),
-                count: riskNum,
-                href: '/admin/user/index',
-                sub: i18n('转账异常金额')
-            });
-        }
+        items.push({
+            label: i18n('风控封禁会员'),
+            count: riskNum,
+            href: '/admin/user/index',
+            sub: i18n('转账异常金额')
+        });
 
         host.replaceChildren(...items.map(item => {
             const li = document.createElement('li');
