@@ -227,6 +227,86 @@
                             </div>
                             <!--end::Input group-->
 
+                            <h2 class="admin-mobile-settings-section-title" id="mobile-security-transfer-honeypot"
+                                data-admin-mobile-description="放行有限次数的异常转账，用来抓出是谁在刷。">#{t("转账风控蜜罐")}</h2>
+
+                            <!--begin::Input group-->
+                            <div class="row mb-6">
+                                <label class="col-lg-4 col-form-label fw-bold fs-6">#{t("开启蜜罐(默认关闭)")}</label>
+                                <div class="col-lg-8 d-flex align-items-center">
+                                    <div class="form-check form-check-solid form-switch fv-row">
+                                        <input class="form-check-input w-45px h-30px" type="checkbox"
+                                               name="transfer_honeypot_enabled"
+                                               value="1" #{if $config.transfer_honeypot_enabled == '1'} checked #{/if}/>
+                                        <label class="form-check-label"></label>
+                                    </div>
+                                </div>
+                                <div class="form-text text-danger fw-bold">
+                                    #{t("开启后，会员转账填写超过两位小数的金额将被放行，每次会让对方余额多出 0.01 元——这是真实的成本。仅在需要排查刷单时临时开启，抓到人后请及时关闭。")}
+                                </div>
+                                <details class="admin-mobile-settings-details">
+                                    <summary>
+                                        <span class="material-icons-outlined" aria-hidden="true">info</span>
+                                        <span>
+                                            <strong>#{t("为什么要故意放行？")}</strong>
+                                            <small>#{t("关闭时一分钱都不会产生")}</small>
+                                        </span>
+                                        <span class="material-icons-outlined" aria-hidden="true">expand_more</span>
+                                    </summary>
+                                    <p>#{t("正常会员不会填出 0.005 这样的金额，所以这类请求几乎必然是脚本在试探。关闭时系统直接拒绝，对方只知道金额不合法；开启后则放行有限次数，达到阈值即自动封号，站长据此知道是谁在刷。本功能只作用于会员之间的转账，提现、下单、充值、分成一律不受影响。")}</p>
+                                </details>
+                            </div>
+                            <!--end::Input group-->
+
+                            <!--begin::Input group-->
+                            <div class="row mb-6">
+                                <label class="col-lg-4 col-form-label fw-bold fs-6">#{t("封禁阈值(次)")}</label>
+                                <div class="col-lg-8 fv-row">
+                                    <input type="number" min="1" max="1000"
+                                           name="transfer_honeypot_limit"
+                                           class="form-control form-control-lg form-control-solid"
+                                           value="#{if $config.transfer_honeypot_limit}#{$config.transfer_honeypot_limit|escape:'html'}#{else}10#{/if}"/>
+                                    <div class="form-text fw-bold">
+                                        #{t("同一会员累计尝试达到该次数即自动封禁，该次不再放行。计数永久保留，不会随时间重置。")}
+                                    </div>
+                                </div>
+                            </div>
+                            <!--end::Input group-->
+
+                            <!--begin::Input group-->
+                            <div class="row mb-6">
+                                <label class="col-lg-4 col-form-label fw-bold fs-6">#{t("全站总量上限(次)")}</label>
+                                <div class="col-lg-8 fv-row">
+                                    <input type="number" min="0" max="100000"
+                                           name="transfer_honeypot_total"
+                                           class="form-control form-control-lg form-control-solid"
+                                           value="#{if $config.transfer_honeypot_total}#{$config.transfer_honeypot_total|escape:'html'}#{else}500#{/if}"/>
+                                    <div class="form-text text-success fw-bold">
+                                        #{t("全站累计放行达到该次数后蜜罐自动失效，回到直接拒绝。按每次 0.01 元计，默认 500 次即最坏损失 5 元。开放注册时单账号阈值限制不住总量，这道闸才是最终兜底。")}
+                                    </div>
+                                    <div class="form-text fw-bold">
+                                        #{t("当前已用：")}#{$transfer_honeypot_used|escape:'html'} / #{if $config.transfer_honeypot_total}#{$config.transfer_honeypot_total|escape:'html'}#{else}500#{/if}
+                                    </div>
+                                </div>
+                            </div>
+                            <!--end::Input group-->
+
+                            <!--begin::Input group-->
+                            <div class="row mb-6">
+                                <label class="col-lg-4 col-form-label fw-bold fs-6">#{t("清零已用配额")}</label>
+                                <div class="col-lg-8 d-flex align-items-center">
+                                    <div class="form-check form-check-solid form-switch fv-row">
+                                        <input class="form-check-input w-45px h-30px" type="checkbox"
+                                               name="transfer_honeypot_reset" value="1"/>
+                                        <label class="form-check-label"></label>
+                                    </div>
+                                </div>
+                                <div class="form-text fw-bold">
+                                    #{t("勾选后保存，本次会把「已用」计数归零、重新发放全站配额。不勾选则保留当前进度。")}
+                                </div>
+                            </div>
+                            <!--end::Input group-->
+
                             <h2 class="admin-mobile-settings-section-title" id="mobile-security-csp"
                                 data-admin-mobile-description="浏览器层的兜底防护，净化器漏了也依然拦得住。">#{t("内容安全策略 CSP")}</h2>
 

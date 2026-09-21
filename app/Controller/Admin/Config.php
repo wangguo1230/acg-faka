@@ -129,6 +129,7 @@ class Config extends Manage
             "ip_mode" => Client::getClientMode(),
             "trusted_proxy_ips" => Client::getTrustedProxyConfig(),
             "link_domain_auto" => implode('、', \App\Util\LinkDomainGuard::allowList()),
+            "transfer_honeypot_used" => \App\Util\TransferHoneypot::used(),
             "admin_entrance" => (string)\App\Model\Config::get('admin_entrance'),
             "request_log_key" => \App\Util\RequestLogCrypto::keyB64(),
             "request_log_summary" => \Kernel\Util\RequestLogger::summary(),

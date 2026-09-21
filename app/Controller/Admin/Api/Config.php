@@ -80,6 +80,10 @@ class Config extends Manage
         'link_domain_filter',
         'link_domain_whitelist',
         'csp_mode',
+        'transfer_honeypot_enabled',
+        'transfer_honeypot_limit',
+        'transfer_honeypot_total',
+        'transfer_honeypot_reset',
     ];
 
     private const SMS_REQUEST_FIELDS = [
@@ -771,9 +775,19 @@ class Config extends Manage
             $normalized[$line] = true;
         }
 
+        //转账蜜罐：开启即意味着每次放行真实产生 0.01 元，所以阈值与总量都必须由站长显式确认。
+        //勾选「清零已用配额」才重置计数，否则保留——避免每次保存安全设置都把总量闸悄悄清空。
+        $honeypotEnabled = $this->settingBoolean($post, 'transfer_honeypot_enabled');
+        $honeypotLimit = $this->settingInteger($post, 'transfer_honeypot_limit', 1, 1000, '转账蜜罐封禁阈值', \App\Util\TransferHoneypot::DEFAULT_LIMIT);
+        $honeypotTotal = $this->settingInteger($post, 'transfer_honeypot_total', 0, 100000, '转账蜜罐全站总量', \App\Util\TransferHoneypot::DEFAULT_TOTAL);
+        $honeypotReset = $this->settingBoolean($post, 'transfer_honeypot_reset');
+
         $settings = [
             'request_log_enabled' => $this->settingBoolean($post, 'request_log_enabled'),
             'admin_entrance' => $entrance,
+            \App\Util\TransferHoneypot::ENABLED_CONFIG => $honeypotEnabled,
+            \App\Util\TransferHoneypot::LIMIT_CONFIG => (string)$honeypotLimit,
+            \App\Util\TransferHoneypot::TOTAL_CONFIG => (string)$honeypotTotal,
             Client::MODE_CONFIG => (string)$ipGetMode,
             LinkDomainGuard::ENABLED_CONFIG => $this->settingBoolean($post, 'link_domain_filter'),
             LinkDomainGuard::WHITELIST_CONFIG => implode("\n", array_keys($normalized)),
@@ -787,6 +801,12 @@ class Config extends Manage
             CFG::putMany($settings);
         } catch (\Throwable $e) {
             throw new JSONException("保存失败，请检查原因");
+        }
+
+        //配额清零必须在主配置落库之后：先清后写时，若 putMany 失败就会留下
+        //「配额清了、开关没开」的半截状态，下次开启即白送一整轮配额。
+        if ($honeypotReset === 1) {
+            \App\Util\TransferHoneypot::reset();
         }
 
         Client::resetModeCache();

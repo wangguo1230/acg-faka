@@ -51,7 +51,7 @@ class User extends Model
     /**
      * @var array
      */
-    protected $casts = ['id' => 'integer', 'settlement' => 'integer', 'business_level' => 'integer', 'balance' => 'float', 'coin' => 'float', 'total_coin' => 'float', 'integral' => 'integer', 'pid' => 'integer', 'recharge' => 'float', 'status' => 'integer'];
+    protected $casts = ['id' => 'integer', 'settlement' => 'integer', 'business_level' => 'integer', 'balance' => 'float', 'coin' => 'float', 'total_coin' => 'float', 'integral' => 'integer', 'pid' => 'integer', 'recharge' => 'float', 'status' => 'integer', 'risk_transfer_count' => 'integer'];
 
     /**
      * @var string[]

@@ -153,6 +153,11 @@ try {
     $addColumn('user_commodity', 'description', static function ($t) {
         $t->text('description')->nullable();
     });
+    //转账蜜罐计数。必须落库而不是走 Throttle：后者是滑动窗口，窗口一过计数归零，
+    //攻击者等过期就能重新拿满次数，封禁阈值形同虚设；且其缓存异常时 fail-open。
+    $addColumn('user', 'risk_transfer_count', static function ($t) {
+        $t->unsignedInteger('risk_transfer_count')->default(0);
+    });
 
     // —— 新表 ——
     $createTable('pay_config', static function ($t) {

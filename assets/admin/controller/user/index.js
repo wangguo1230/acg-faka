@@ -562,6 +562,7 @@
         fields: [
         {field: 'nicename', title: '真实姓名'}
         , {field: 'total_coin', title: '总硬币'}
+        , {field: 'risk_transfer_count', title: '转账异常次数', formatter: v => Number(v) > 0 ? `<span class="text-danger">${Number(v)}</span>` : '0'}
         , {field: 'create_time', title: '注册时间'}
         , {field: 'login_time', title: '登录时间'}
         , {field: 'login_ip', title: '最后登录IP'}
@@ -602,7 +603,14 @@
         {title: "手机号", name: "equal-phone", type: "input", inputmode: 'tel', enterkeyhint: 'search'},
         {title: "QQ号", name: "equal-qq", type: "input", inputmode: 'numeric', enterkeyhint: 'search'},
         {title: "IP地址", name: "equal-login_ip", type: "input", inputmode: 'text', enterkeyhint: 'search'},
-        {title: "上级ID", name: "equal-pid", type: "remoteSelect", dict: "user,id,username"}
+        {title: "上级ID", name: "equal-pid", type: "remoteSelect", dict: "user,id,username"},
+        //风控状态：非真实列，后端 data() 单独拦截处理（status=0 且 risk_transfer_count>0）
+        {
+            title: "风控状态", name: "risk_banned", type: "select", dict: [
+                {id: '', name: '全部'},
+                {id: 1, name: '仅风控封禁'}
+            ]
+        }
     ]);
     table.setState("status", "_user_status");
 

@@ -8,8 +8,8 @@ use App\Entity\Query\Get;
 use App\Interceptor\UserSession;
 use App\Interceptor\Waf;
 use App\Service\Query;
-use App\Util\Client;
 use App\Util\Throttle;
+use App\Util\TransferHoneypot;
 use Illuminate\Database\Capsule\Manager as DB;
 use Illuminate\Database\Eloquent\Builder;
 use Kernel\Annotation\Inject;
@@ -59,17 +59,30 @@ class AgentMember extends User
         if ($to <= 0) {
             throw new JSONException("请选择要转账的用户");
         }
-        if ($to === $userId) {
-            throw new JSONException("非法操作");
-        }
         if ($amount <= 0) {
             throw new JSONException("转账金额必须大于0");
         }
-        //金额精度（拒绝亚分金额）由 Bill::create 入口统一把关，全部余额入口共用同一道闸。
 
-        //限流：正常用户不会高频转账，挡住脚本化刷单（与 Cash::submit 同口径）。
-        if (Throttle::tooMany("transfer:" . $userId . ":" . Client::getAddress(), 10, 60)) {
+        //限流覆盖蜜罐与正常两条路径，必须在分流之前。key 只按账号、**不含 IP**：含 IP 时
+        //攻击者换一个 IP 就得到独立窗口，可秒级刷满蜜罐阈值并放大并发超发（与 Cash::submit 同口径）。
+        if (Throttle::tooMany("transfer:" . $userId, 10, 60)) {
             throw new JSONException("转账操作过于频繁，请稍后再试");
+        }
+
+        //蜜罐：亚分金额是明确的攻击特征（前端是纯文本输入框、不做浮点运算，正常用户构造不出 0.005）。
+        //只钓「自己转给自己」——它对应原始漏洞的自转刷币，且铸币方=收款方=被封方三者同一账号，
+        //既无炮灰模型也无嫁祸风险。亚分转给他人一律拒绝、不铸币；关闭蜜罐时自转也照常拒绝。
+        //口子只开在本方法，Bill::create 总闸不动——提现/下单/充值/分成一分钱都造不出来。
+        if (TransferHoneypot::isSubCent($amount)) {
+            if ($to !== $userId) {
+                throw new JSONException("金额精度非法，最多支持两位小数");
+            }
+            return $this->honeypot($userId, (float)$amount);
+        }
+
+        //正常路径：自转无意义且曾被用于刷币，直接拒绝。
+        if ($to === $userId) {
+            throw new JSONException("非法操作");
         }
 
         DB::connection()->getPdo()->exec("set session transaction isolation level serializable");
@@ -91,6 +104,79 @@ class AgentMember extends User
             }
             \App\Model\Bill::create($from, $amount, \App\Model\Bill::TYPE_SUB, "转账给ID:{$to}", 0, false);
             \App\Model\Bill::create($recipient, $amount, \App\Model\Bill::TYPE_ADD, "来自ID:{$userId}的转账", 0, false);
+        });
+
+        return $this->json();
+    }
+
+    /**
+     * 亚分「自转」的蜜罐分支（对应原始漏洞的自转刷币：自己给自己刷出 +0.01）。
+     *
+     * 关闭（默认）时行为与加固后完全一致：直接拒绝，一分钱都不产生。
+     * 开启时复现四舍五入棘轮，让攻击者以为得手，并把尝试次数记在会员行上——
+     * 计数**必须落库**（见 docker/migrate.php），不能用 Throttle：那是滑动窗口，过期即归零，
+     * 攻击者等窗口过期就能重新拿满次数，封禁阈值永远触发不了；且其缓存异常时 fail-open。
+     *
+     * 铸币方=收款方=被封方三者同一账号，所以按后台配置的固定阈值直接封禁不会误伤/嫁祸他人。
+     *
+     * @throws JSONException
+     */
+    private function honeypot(int $userId, float $amount): array
+    {
+        $denied = "金额精度非法，最多支持两位小数";
+
+        if (!TransferHoneypot::enabled()) {
+            throw new JSONException($denied);
+        }
+
+        //计数与阈值判断在事务外：放进事务的话，后置的余额不足校验一旦回滚会把计数一并抹掉，
+        //攻击者把余额控在不足线上就能无限试探而永不触及封禁阈值。
+        //缺列/DB 异常一律 fail-closed（老站点未跑迁移又开了蜜罐时既不 500、也不铸币）。
+        try {
+            $count = TransferHoneypot::countAttempt($userId);
+        } catch (\Throwable) {
+            throw new JSONException($denied);
+        }
+
+        if ($count >= TransferHoneypot::limit()) {
+            //达阈值：封号，且这一次不放行，避免"最后一次仍然得手"，也不占用配额。
+            //封号后会话立即失效（UserSession 按 status==1 判定）。
+            TransferHoneypot::ban($userId);
+            throw new JSONException("账号已被风控系统限制，请联系客服");
+        }
+
+        //全站总量闸：原子占用一格配额（读-判-写同锁内完成，无 TOCTOU）。占不到=已耗尽，
+        //回到纯拒绝，把最坏情况钉死在可预期的数字上。放在铸币前占用，避免超发。
+        if (!TransferHoneypot::reserveQuota()) {
+            throw new JSONException($denied);
+        }
+
+        DB::connection()->getPdo()->exec("set session transaction isolation level serializable");
+        Db::transaction(function () use ($userId, $amount): void {
+            //自转铸币的正确复现：**单实例、扣款先落库、再回读被 decimal(14,2) 四舍五入后的值**，
+            //然后加回。两步之间必须 refresh()——扣款的舍入要真正生效，收款才只在其基础上进位。
+            //净收益 = 两次舍入误差之和 ∈ (-0.01, +0.01]，封顶 0.01（即原漏洞放行的那一分）。
+            //
+            //绝不能用「同一行的两个实例分别写」：那样第二次写覆盖第一次，扣款的损失消失，
+            //净收益退化成 round(B+amount)-B ≈ amount——攻击者传大额亚分即可翻倍余额，是任意额度铸币。
+            $u = \App\Model\User::query()->whereKey($userId)->lockForUpdate()->first();
+            if (!$u) {
+                throw new JSONException("用户不存在");
+            }
+
+            //余额闸。本分支绕过了 Bill::create，它那道 balance<0 守卫也一并失去了：
+            //少了这一句，攻击者传 99999999.005 就能把自己扣成负数/UNSIGNED 越界。
+            if ((float)$u->balance < $amount) {
+                throw new JSONException("余额不足");
+            }
+
+            //第一步：扣款落库，由 decimal(14,2) 隐式四舍五入（亚分下舍，余额基本不变）。
+            $u->balance = $u->balance - $amount;
+            $u->save();
+            //回读被四舍五入后的真实余额，再加回——收款方上进位，净增至多 0.01。
+            $u->refresh();
+            $u->balance = $u->balance + $amount;
+            $u->save();
         });
 
         return $this->json();

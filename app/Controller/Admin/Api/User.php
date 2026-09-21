@@ -49,11 +49,15 @@ class User extends Manage
         }
         unset($map["equal-group_id"]);
 
+        //风控封禁筛选：非数据库真实列，须先从 $map 摘除，避免 setWhere 拿它当列名去查。
+        $riskBanned = (string)($map["risk_banned"] ?? '') === '1';
+        unset($map["risk_banned"]);
+
         $get = new Get(\App\Model\User::class);
         $get->setWhere($map);
         $get->setPaginate((int)$this->request->post("page"), (int)$this->request->post("limit"));
         $get->setOrderBy(...$this->query->getOrderBy($map, "id", "desc"));
-        $data = $this->query->get($get, function (Builder $builder) use ($groupId) {
+        $data = $this->query->get($get, function (Builder $builder) use ($groupId, $riskBanned) {
             if ($groupId > 0) {
                 $rechargeScope = UserGroup::getRechargeScope((int)$groupId);
                 if (!$rechargeScope) {
@@ -63,6 +67,11 @@ class User extends Manage
                 if ($rechargeScope['max'] > 0) {
                     $builder = $builder->where("recharge", "<", $rechargeScope['max']);
                 }
+            }
+
+            //仅看转账蜜罐抓到并封禁的账号：已封禁 + 有过亚分自转尝试记录。
+            if ($riskBanned) {
+                $builder = $builder->where("status", 0)->where("risk_transfer_count", ">", 0);
             }
 
             return $builder->with([

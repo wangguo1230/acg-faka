@@ -1,0 +1,3 @@
+# 安全测试资产：含真实账号明文口令、有效登录 JWT cookie 与攻击自动化脚本，禁止入库
+/tests/security/
+/work/

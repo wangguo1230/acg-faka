@@ -287,7 +287,7 @@ class Dashboard extends \App\Controller\Base\API\Manage
 
         //待你处理：跟时间筛选无关——昨天提交、今天还没处理的提现，今天也必须看得见。
         //每项单独兜底：老站点升级后可能缺某张表（如工单），一项失败不能让整块看板空掉。
-        $todo = ['cash_num' => 0, 'cash_amount' => '0.00', 'delivery_num' => 0, 'ticket_num' => 0];
+        $todo = ['cash_num' => 0, 'cash_amount' => '0.00', 'delivery_num' => 0, 'ticket_num' => 0, 'risk_banned_num' => 0];
         try {
             $pendingCash = Cash::query()->where('status', 0)
                 ->selectRaw('COUNT(*) AS num, COALESCE(SUM(amount),0) AS amount')->toBase()->first();
@@ -307,6 +307,17 @@ class Dashboard extends \App\Controller\Base\API\Manage
         }
         try {
             $todo['ticket_num'] = Ticket::query()->where('status', 0)->count();
+        } catch (\Throwable) {
+        }
+        try {
+            //风控封禁：已封禁(status=0)且有过转账蜜罐尝试(risk_transfer_count>0)的账号。
+            //口径不挂 limit()——阈值只增不减地记在行上，用 ">0" 而非 ">=limit()" 可避免站长
+            //调高阈值后旧封禁账号被漏计；也不会把因其它原因禁用、恰好无蜜罐记录的账号误计。
+            //老站点升级前没有这一列，查询失败按 0 处理，不影响看板其它部分。
+            $todo['risk_banned_num'] = User::query()
+                ->where('status', 0)
+                ->where('risk_transfer_count', '>', 0)
+                ->count();
         } catch (\Throwable) {
         }
 
