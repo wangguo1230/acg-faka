@@ -364,6 +364,9 @@ class User extends Manage
      * @throws NotFoundException
      * @throws \ReflectionException
      */
+    //删除会员是破坏性写操作，收敛到站长(type==0)本人，与 save/recharge/coin 同口径。
+    //旧代码仅继承类级 ManageSession，导致 type 2/3 子管理员可越权批量删除全站会员。
+    #[Interceptor(Owner::class, Interceptor::TYPE_API)]
     public function del(): array
     {
         if (strtoupper($this->request->method()) !== 'POST') {
@@ -441,6 +444,9 @@ class User extends Manage
     /**
      * @throws JSONException
      */
+    //关停商户店铺是破坏性写操作，收敛到站长(type==0)本人。
+    //旧代码仅继承类级 ManageSession，导致 type 2/3 子管理员可越权停业任意分站/供货商。
+    #[Interceptor(Owner::class, Interceptor::TYPE_API)]
     public function shopClosed(): array
     {
         if (strtoupper($this->request->method()) !== 'POST') {

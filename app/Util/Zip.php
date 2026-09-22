@@ -24,6 +24,25 @@ class Zip
             }
             $zip = new \ZipArchive();
             if ($zip->open($filePath) === true) {
+                //Zip-Slip 防护：extractTo 会照条目名写盘，含 ../ 或绝对路径的条目可越出 $path
+                //（如 ../../public/shell.php 落到 webroot）。解压前逐条校验，命中即整体拒绝。
+                for ($i = 0; $i < $zip->numFiles; $i++) {
+                    $entry = $zip->getNameIndex($i);
+                    if ($entry === false) {
+                        $zip->close();
+                        return false;
+                    }
+                    $normalized = str_replace('\\', '/', $entry);
+                    if (str_starts_with($normalized, '/')
+                        || preg_match('#^[A-Za-z]:#', $normalized)
+                        || $normalized === '..'
+                        || str_starts_with($normalized, '../')
+                        || str_contains($normalized, '/../')
+                        || str_ends_with($normalized, '/..')) {
+                        $zip->close();
+                        return false;
+                    }
+                }
                 $result = $zip->extractTo($path);
                 $zip->close();
                 return $result;

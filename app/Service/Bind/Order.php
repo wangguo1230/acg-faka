@@ -876,7 +876,12 @@ class Order implements \App\Service\Order
                 //否则一个被留空或填 0 的价格档、分站四舍五入抹零、100% 会员折扣，或对接方选中 0 价档，
                 //都会让 valuation 算出 0 → 命中这里把**有价值的真实卡密**免费发出去（货源商品平台还要向上游代付）。
                 //有价值的商品却算出 ≤0、且不是满额优惠券抵扣的，一律判为配置异常/被利用，拒单。
-                if (empty($order->coupon_id) && $this->commodityHasPositiveValue($lockedCommodity)) {
+                //旧写法 `empty(coupon_id) && ...` 有短路漏洞：只要带上任意 coupon_id，左侧为 false，
+                //整个校验被跳过，正价商品被直接置 0 元发货。修正为：正价商品在「无券」或「用券后
+                //抵扣仍 ≤0」两种情况下都拒单——带券也必须重新估价确认确实是满额抵扣才放行。
+                if ($this->commodityHasPositiveValue($lockedCommodity)
+                    && (empty($order->coupon_id)
+                        || bccomp($this->valuation($lockedCommodity, $num, $race, $sku, $cardId, null, $userGroup), "0", 2) <= 0)) {
                     throw new JSONException("商品价格配置异常，暂时无法下单，请联系商家");
                 }
                 $order->amount = "0.00";

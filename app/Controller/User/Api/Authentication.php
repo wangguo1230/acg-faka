@@ -56,6 +56,13 @@ class Authentication extends User
             throw new JSONException("注册已关闭");
         }
 
+        //注册限流：与 login/forget 同口径的按 IP 兜底。注册验证码可被站长关闭
+        //（registered_verification==0，常见配置），关闭后本接口原本无任何人机/频率防护，
+        //可被脚本批量注册可用账号（薅优惠/刷单/占用户名/放大分销层级）。这里始终挡住高频请求。
+        if (Throttle::tooMany("register:ip:" . Client::getAddress(), 10, 300)) {
+            throw new JSONException("注册过于频繁，请稍后再试");
+        }
+
         if ($registeredVerification == 1 && (!isset($_POST['captcha']) || !Captcha::check((int)$_POST['captcha'], "register"))) {
             throw new JSONException("验证码错误");
         }

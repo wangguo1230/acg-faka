@@ -141,6 +141,23 @@ class App implements \App\Service\App
     }
 
     /**
+     * 校验插件 key 只含合法字符，防路径遍历。
+     *
+     * key 会被直接拼进文件系统路径（app/Plugin/{key}/、app/Pay/{key}/、Theme/{key}/），
+     * 且经历 mkdir / Zip::unzip / File::delDirectory。控制器把 $_POST['plugin_key'] 原样下传，
+     * 未加校验时 `../../public` 之类可越出插件目录，导致任意目录删除或向 webroot 写入（CWE-22）。
+     * 插件 key 本就只应是 [A-Za-z0-9_]，这里强制白名单。
+     *
+     * @throws JSONException
+     */
+    private function assertPluginKey(string $key): void
+    {
+        if ($key === '' || !preg_match('/^[A-Za-z0-9_]+$/', $key)) {
+            throw new JSONException("非法的插件标识");
+        }
+    }
+
+    /**
      * @param string $key
      * @param int $type 插件类型
      * @param int $pluginId
@@ -150,6 +167,7 @@ class App implements \App\Service\App
      */
     public function installPlugin(string $key, int $type, int $pluginId): void
     {
+        $this->assertPluginKey($key);
         //默认位置，通用插件
         $pluginPath = BASE_PATH . "/app/Plugin/{$key}/";
         $fileInit = file_exists($pluginPath . "/Config/Info.php");
@@ -212,6 +230,7 @@ class App implements \App\Service\App
      */
     public function updatePlugin(string $key, int $type, int $pluginId): void
     {
+        $this->assertPluginKey($key);
         //默认位置，通用插件
         $pluginPath = BASE_PATH . "/app/Plugin/{$key}/";
         if ($type == 1) {
@@ -307,6 +326,7 @@ class App implements \App\Service\App
      */
     public function uninstallPlugin(string $key, int $type): void
     {
+        $this->assertPluginKey($key);
         //默认位置，通用插件
         $pluginPath = BASE_PATH . "/app/Plugin/{$key}/";
         if ($type == 1) {
