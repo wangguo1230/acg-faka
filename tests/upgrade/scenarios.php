@@ -85,6 +85,15 @@ if ($action === 'seed') {
     check((int)$db->table('pay')->where('handle', 'UnusedPay')->value('pay_config_id') === 0, 'Inactive payment changed');
     check(App\Util\Csp::mode() === 'report', 'Upgrade unexpectedly enabled enforcing CSP');
     check($db->table('docker_migration')->count() === 1, 'Migration completion missing');
+    $schema = $db->getSchemaBuilder();
+    foreach (['manage_webauthn', 'user_webauthn', 'user_session', 'user_log'] as $table) {
+        check($schema->hasTable($table), "3.8.1 table {$table} missing");
+    }
+    foreach (['commodity' => ['substation_disable', 'ban', 'ban_reason'], 'user' => ['totp_secret', 'totp_recovery', 'fund_2fa'],
+                 'manage_session' => ['last_active_time']] as $table => $columns) {
+        check($schema->hasColumns($table, $columns), "3.8.1 columns on {$table} missing");
+    }
+    check(App\Util\AdminLock::timeoutMinutes() === 15, 'Upgrade changed admin lock default');
     check((require BASE_PATH . '/app/Pay/Epay/Config/Config.php')['key'] === 'old-test-key', 'Legacy file overwritten');
 } elseif ($action === 'callbacks') {
     $service = orderService();

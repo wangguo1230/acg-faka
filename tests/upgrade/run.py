@@ -87,8 +87,10 @@ def main():
         def reset(dump=old_sql):
             sql('DROP DATABASE IF EXISTS upgrade_test; CREATE DATABASE upgrade_test;')
             sql(dump=dump)
-            shutil.rmtree(root / 'runtime', ignore_errors=True)
-            (root / 'runtime').mkdir()
+            # Empty runtime in place: recreating the bind-mounted directory leaves Docker Desktop
+            # (virtiofs) pointing later containers at the deleted inode.
+            for entry in (root / 'runtime').iterdir():
+                shutil.rmtree(entry) if entry.is_dir() and not entry.is_symlink() else entry.unlink()
 
         try:
             command(['docker', 'network', 'create', '--internal', network])

@@ -21,3 +21,7 @@ assets/cache/*
 
 *.log
 *.tmp
+
+# 本地工作区杂项，不进镜像
+work
+pelican-ride.html

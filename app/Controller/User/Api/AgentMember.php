@@ -50,15 +50,17 @@ class AgentMember extends User
      */
     public function transfer(): array
     {
-        //收款方 ID 必须按整型解析：旧代码 $to 为字符串 + 松散比较，"5abc"==5 在 PHP8 为 false 可绕过
+        //收款方 ID 必须是纯数字：旧代码 $to 为字符串 + 松散比较，"5abc"==5 在 PHP8 为 false 可绕过
         //自转检查，而 MySQL 的 find("5abc") 又会截断成 5 命中本人，配合亚分金额形成自转刷币。
-        $to = (int)$this->request->post("id");
+        $rawTo = $this->request->post("id", Filter::NORMAL);
+        $rawTo = is_scalar($rawTo) ? trim((string)$rawTo) : '';
+        if (!preg_match('/^\d+$/', $rawTo) || (int)$rawTo <= 0) {
+            throw new JSONException("目标账号不正确");
+        }
+        $to = (int)$rawTo;
         $amount = $this->request->post("amount", Filter::FLOAT);
         $userId = (int)$this->getUser()->id;
 
-        if ($to <= 0) {
-            throw new JSONException("请选择要转账的用户");
-        }
         if ($amount <= 0) {
             throw new JSONException("转账金额必须大于0");
         }
@@ -68,6 +70,10 @@ class AgentMember extends User
         if (Throttle::tooMany("transfer:" . $userId, 10, 60)) {
             throw new JSONException("转账操作过于频繁，请稍后再试");
         }
+
+        //资金操作二次验证：开启了两步验证并打开开关的会员，转账前需通过 TOTP（步进窗口内免重复）。
+        //放在蜜罐分流之前，蜜罐路径与正常路径表现一致，不暴露差异。
+        \App\Util\FundGuard::assert($this->getUser());
 
         //蜜罐：亚分金额是明确的攻击特征（前端是纯文本输入框、不做浮点运算，正常用户构造不出 0.005）。
         //只钓「自己转给自己」——它对应原始漏洞的自转刷币，且铸币方=收款方=被封方三者同一账号，
@@ -106,6 +112,7 @@ class AgentMember extends User
             \App\Model\Bill::create($recipient, $amount, \App\Model\Bill::TYPE_ADD, "来自ID:{$userId}的转账", 0, false);
         });
 
+        \App\Model\UserLog::write($this->getUser(), 'transfer', '转账给 ID:' . $to . ' 金额 ' . $amount);
         return $this->json();
     }
 

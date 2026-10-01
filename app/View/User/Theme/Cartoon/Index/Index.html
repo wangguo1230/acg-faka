@@ -22,7 +22,7 @@
         <div class="chip-list">
             <a data-id="0" class="switch-category chip #{if $categoryId == 0} is-primary #{/if}" href="javascript:void(0);">#{lang("全部")}</a>
             #{foreach $category as $cate}
-                <a data-id="#{$cate.id}" class="switch-category chip #{if $cate.id == $categoryId} is-primary #{/if}" href="javascript:void(0);">#{if $cate.id != 'recommend'}<span class="chip-icon" style="background: url('#{$cate.icon}') center/cover no-repeat;"></span>#{/if}#{lang($cate.name)}</a>
+                <a data-id="#{$cate.id}" class="switch-category chip #{if $cate.id != 'recommend' && $cate.commodity_count == 0}is-disabled #{/if}#{if $cate.id == $categoryId} is-primary #{/if}" href="javascript:void(0);">#{if $cate.id != 'recommend'}<span class="chip-icon" style="background: url('#{$cate.icon}') center/cover no-repeat;"></span>#{/if}#{lang($cate.name)}</a>
             #{/foreach}
         </div>
       </div>

@@ -60,6 +60,7 @@ class Order implements \App\Service\Order
         'level_price',
         'level_disable',
         'config',
+        'substation_disable',
     ];
 
     public const CALLBACK_REJECT = "fail";
@@ -313,12 +314,12 @@ class Order implements \App\Service\Order
                 throw new JSONException("该优惠券已过期");
             }
 
-            if ($voucher->mode == 0 && $voucher->money >= $price->getAmount()) {
-                return "0";
-            }
-
-            $deduction = $voucher->mode == 0 ? $voucher->money : $price->mul($voucher->money)->getAmount();
-            $price = $price->sub($deduction);
+            $deduction = $voucher->mode == 0
+                ? (new Decimal($voucher->money, 2))->getAmount()
+                : $price->mul($voucher->money)->getAmount();
+            $price = bccomp($deduction, $price->getAmount(), 2) >= 0
+                ? new Decimal("0", 2)
+                : $price->sub($deduction);
         }
 
         return $price->mul($num)->getAmount();
@@ -570,6 +571,11 @@ class Order implements \App\Service\Order
             $from = $user->pid;
         }
 
+        $promotion = \App\Util\Promotion::enabled();
+        if (!$promotion) {
+            $from = 0;
+        }
+
         if ($commodityId == 0) {
             throw new JSONException("请选择商品");
         }
@@ -578,6 +584,7 @@ class Order implements \App\Service\Order
             throw new JSONException("至少购买1个");
         }
 
+        \App\Util\Schema::ensureCommodityControl();
         $commodity = Commodity::with(['shared'])->find($commodityId);
 
         if (!$commodity) {
@@ -586,6 +593,11 @@ class Order implements \App\Service\Order
 
         if ($commodity->status != 1) {
             throw new JSONException("当前商品已停售");
+        }
+
+        $substation = Business::get();
+        if ($substation && !$substation->sells($commodity)) {
+            throw new JSONException("商品不存在");
         }
 
         if (Config::get("force_login") == 1 || $commodity->only_user == 1 || $commodity->purchase_count > 0) {
@@ -773,7 +785,7 @@ class Order implements \App\Service\Order
         }
 
         DB::connection()->getPdo()->exec("set session transaction isolation level serializable");
-        $result = Db::transaction(function () use ($commodity, $rent, $rebate, $divideAmount, $business, $sku, $requestNo, $user, $userGroup, $num, $contact, $device, $amount, $owner, $pay, $cardId, $password, $coupon, $from, $widget, $race, $callbackDomain, $clientDomain) {
+        $result = Db::transaction(function () use ($commodity, $rent, $rebate, $divideAmount, $business, $sku, $requestNo, $user, $userGroup, $num, $contact, $device, $amount, $owner, $pay, $cardId, $password, $coupon, $from, $promotion, $widget, $race, $callbackDomain, $clientDomain) {
             $lockedCommodity = $this->lockCommodityForOrder($commodity);
 
             if ((int)$lockedCommodity->status !== 1) {
@@ -879,6 +891,9 @@ class Order implements \App\Service\Order
                 //旧写法 `empty(coupon_id) && ...` 有短路漏洞：只要带上任意 coupon_id，左侧为 false，
                 //整个校验被跳过，正价商品被直接置 0 元发货。修正为：正价商品在「无券」或「用券后
                 //抵扣仍 ≤0」两种情况下都拒单——带券也必须重新估价确认确实是满额抵扣才放行。
+                if ((float)$order->amount < 0) {
+                    throw new JSONException("商品价格配置异常，暂时无法下单，请联系商家");
+                }
                 if ($this->commodityHasPositiveValue($lockedCommodity)
                     && (empty($order->coupon_id)
                         || bccomp($this->valuation($lockedCommodity, $num, $race, $sku, $cardId, null, $userGroup), "0", 2) <= 0)) {
@@ -905,7 +920,7 @@ class Order implements \App\Service\Order
                         throw new JSONException("You have been banned");
                     }
                     $parent = $session->parent;
-                    if ($parent && $order->user_id != $from) {
+                    if ($promotion && $parent && $order->user_id != $from) {
                         $order->from = $parent->id;
                     }
 

@@ -1,6 +1,6 @@
 <?php
 /**
- * 容器启动迁移：把存量库从 3.5.x 补齐到当前镜像所需的 3.7.x 结构，
+ * 容器启动迁移：把存量库从 3.5.x 补齐到当前镜像所需的 3.8.x 结构，
  * 并把旧支付插件 Config.php 导入 pay_config、绑定 pay.pay_config_id。
  *
  * 关键路径（pay_config / manage_session / 支付配置绑定）失败必须非 0 退出，
@@ -159,6 +159,26 @@ try {
         $t->unsignedInteger('risk_transfer_count')->default(0);
     });
 
+    // —— 列：3.7.7 → 3.8.1 增量（商品管控 / 会员两步验证 / 后台闲置锁屏）——
+    $addColumn('commodity', 'substation_disable', static function ($t) {
+        $t->unsignedTinyInteger('substation_disable')->default(0);
+    });
+    $addColumn('commodity', 'ban', static function ($t) {
+        $t->unsignedTinyInteger('ban')->default(0);
+    });
+    $addColumn('commodity', 'ban_reason', static function ($t) {
+        $t->string('ban_reason', 255)->nullable();
+    });
+    $addColumn('user', 'totp_secret', static function ($t) {
+        $t->string('totp_secret', 64)->nullable();
+    });
+    $addColumn('user', 'totp_recovery', static function ($t) {
+        $t->text('totp_recovery')->nullable();
+    });
+    $addColumn('user', 'fund_2fa', static function ($t) {
+        $t->unsignedTinyInteger('fund_2fa')->default(0);
+    });
+
     // —— 新表 ——
     $createTable('pay_config', static function ($t) {
         $t->increments('id');
@@ -190,40 +210,103 @@ try {
         $t->index('last_seen_time');
     }, true);
 
-    if ($schema->hasTable('manage_session') && $schema->hasTable('manage')) {
-        $sessionTable = $db->getTablePrefix() . 'manage_session';
-        $fkNames = ['manage_session_ibfk_1', $db->getTablePrefix() . 'manage_session_ibfk_1'];
-        $fkExists = false;
+    //外键与建表分开：存量库主表列类型可能与 Install.sql 不一致，外键失败只记录、不阻断启动。
+    $ensureForeign = static function (string $table, string $column, string $refTable) use ($schema, $db): void {
+        if (!$schema->hasTable($table) || !$schema->hasTable($refTable)) {
+            return;
+        }
+        $name = $table . '_ibfk_1';
         try {
             $rows = $db->select(
                 "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
                  WHERE CONSTRAINT_SCHEMA = DATABASE()
                    AND TABLE_NAME = ?
                    AND CONSTRAINT_TYPE = 'FOREIGN KEY'",
-                [$sessionTable]
+                [$db->getTablePrefix() . $table]
             );
             $have = [];
             foreach ($rows as $row) {
                 $row = (array)$row;
                 $have[] = (string)($row['CONSTRAINT_NAME'] ?? $row['constraint_name'] ?? '');
             }
-            $fkExists = array_intersect($fkNames, $have) !== [];
-        } catch (\Throwable) {
-            $fkExists = false;
-        }
-        if (!$fkExists) {
-            try {
-                $schema->table('manage_session', static function ($t) {
-                    $t->foreign('manage_id', 'manage_session_ibfk_1')
-                        ->references('id')->on('manage')
-                        ->onDelete('cascade');
-                });
-                fwrite(STDOUT, "[migrate] manage_session 外键已添加\n");
-            } catch (\Throwable $e) {
-                fwrite(STDOUT, "[migrate] manage_session 外键跳过（" . $e->getMessage() . "）\n");
+            if (array_intersect([$name, $db->getTablePrefix() . $name], $have) !== []) {
+                return;
             }
+        } catch (\Throwable) {
         }
-    }
+        try {
+            $schema->table($table, static function ($t) use ($column, $refTable, $name) {
+                $t->foreign($column, $name)->references('id')->on($refTable)->onDelete('cascade');
+            });
+            fwrite(STDOUT, "[migrate] {$table} 外键已添加\n");
+        } catch (\Throwable $e) {
+            fwrite(STDOUT, "[migrate] {$table} 外键跳过（" . $e->getMessage() . "）\n");
+        }
+    };
+    $ensureForeign('manage_session', 'manage_id', 'manage');
+
+    // —— 3.7.7 → 3.8.1 新表：后台闲置锁屏 / 通行密钥 / 会员会话与安全日志 ——
+    $addColumn('manage_session', 'last_active_time', static function ($t) {
+        $t->dateTime('last_active_time')->nullable();
+    });
+
+    $webauthn = static function (string $owner): callable {
+        return static function ($t) use ($owner) {
+            $t->bigIncrements('id');
+            $t->unsignedInteger($owner);
+            $t->string('credential_id', 255);
+            $t->text('public_key');
+            $t->unsignedBigInteger('sign_count')->default(0);
+            $t->string('transports', 128)->nullable();
+            $t->string('aaguid', 64)->nullable();
+            $t->string('name', 64)->default('');
+            $t->dateTime('created_time');
+            $t->dateTime('last_used_time')->nullable();
+            $t->string('last_used_ip', 45)->nullable();
+            $t->unique('credential_id', 'credential_id');
+            $t->index($owner, $owner);
+        };
+    };
+    $createTable('manage_webauthn', $webauthn('manage_id'));
+    $ensureForeign('manage_webauthn', 'manage_id', 'manage');
+    $createTable('user_webauthn', $webauthn('user_id'));
+    $ensureForeign('user_webauthn', 'user_id', 'user');
+
+    $createTable('user_session', static function ($t) {
+        $t->bigIncrements('id');
+        $t->unsignedInteger('user_id');
+        $t->char('session_hash', 64);
+        $t->string('device_type', 16);
+        $t->string('device_name', 96);
+        $t->string('user_agent', 512);
+        $t->string('login_ip', 45);
+        $t->string('last_ip', 45);
+        $t->dateTime('created_time');
+        $t->dateTime('last_seen_time');
+        $t->dateTime('expires_time');
+        $t->dateTime('revoked_time')->nullable();
+        $t->unique('session_hash', 'session_hash');
+        $t->index(['user_id', 'revoked_time', 'expires_time'], 'user_active');
+        $t->index('last_seen_time', 'last_seen_time');
+    });
+    $ensureForeign('user_session', 'user_id', 'user');
+
+    $createTable('user_log', static function ($t) {
+        $t->bigIncrements('id');
+        $t->unsignedInteger('user_id');
+        $t->string('username', 32)->default('');
+        $t->string('action', 32);
+        $t->string('content', 255)->default('');
+        $t->dateTime('create_time');
+        $t->string('create_ip', 64);
+        $t->string('ua', 255)->nullable();
+        $t->unsignedTinyInteger('risk')->default(0);
+        $t->index('user_id', 'user_id');
+        $t->index('create_time', 'create_time');
+        $t->index('action', 'action');
+        $t->index('risk', 'risk');
+    });
+    $ensureForeign('user_log', 'user_id', 'user');
 
     $createTable('lang', static function ($t) {
         $t->increments('id');
@@ -282,6 +365,8 @@ try {
             // 老站升级默认 report：与 Csp::mode() 在键缺失时的行为一致。
             // enforce 是全新安装 Install.sql 的值，套到存量站会拦主题/插件外链脚本。
             'csp_mode' => 'report',
+            // 与 AdminLock 缺键时的默认一致（15 分钟闲置锁屏），写入只为后台表单不空白。
+            'admin_lock_timeout' => '15',
         ];
         foreach ($configDefaults as $key => $value) {
             try {
