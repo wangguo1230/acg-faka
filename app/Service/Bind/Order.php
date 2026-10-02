@@ -465,7 +465,10 @@ class Order implements \App\Service\Order
         }
     }
 
-    private function lockLocalDraftCardForOrder(Commodity $commodity, int $cardId): void
+    /**
+     * @param array|null $sku 传 null 表示不校验规格（仅后台赠送这类不计价的入口）
+     */
+    private function lockLocalDraftCardForOrder(Commodity $commodity, int $cardId, ?string $race = null, ?array $sku = null): void
     {
         if ($cardId <= 0 || (int)$commodity->draft_status !== 1 || (int)$commodity->shared_id > 0) {
             return;
@@ -474,7 +477,7 @@ class Order implements \App\Service\Order
         $card = Card::query()
             ->whereKey($cardId)
             ->lockForUpdate()
-            ->first(['id', 'commodity_id', 'status']);
+            ->first(['id', 'commodity_id', 'status', 'race', 'sku']);
         if (!$card) {
             throw new JSONException('预选的宝贝不存在');
         }
@@ -483,6 +486,9 @@ class Order implements \App\Service\Order
         }
         if ((int)$card->status !== 0) {
             throw new JSONException('此宝贝已被他人抢走');
+        }
+        if ($sku !== null && !$card->matchesSpec($race, $sku)) {
+            throw new JSONException('预选的宝贝与所选规格不一致');
         }
     }
 
@@ -752,7 +758,9 @@ class Order implements \App\Service\Order
                 $x_amount = $shopService->getSubstationPrice($commodity, $x_amount);
 
                 $x_divideAmount = (new Decimal($amount))->sub($x_amount)->getAmount();
-                if ($rebate > $x_divideAmount) {
+                //推广人价高于买家实付时差价为负：不能进入下面的分支，否则 rebate 减负数反被抬高，
+                //商户可设「零售价 1 / 会员价 100」让 1 元订单入账 99 硬币，凭空从平台套现。
+                if ($x_divideAmount > 0 && $rebate > $x_divideAmount) {
                     $rebate = (new Decimal($rebate))->sub($x_divideAmount)->getAmount();
                     $divideAmount = $x_divideAmount;
                 }
@@ -761,6 +769,12 @@ class Order implements \App\Service\Order
             }
         } else {
             $from = 0;
+        }
+
+        //兜底：返利与分成都从买家实付里分出去，二者之和超过实付就是在凭空造币，直接拒单。
+        $payout = (new Decimal(max(0, (float)$rebate), 2))->add(max(0, (float)$divideAmount))->getAmount();
+        if (bccomp($payout, (new Decimal($amount, 2))->getAmount(), 2) > 0) {
+            throw new JSONException("商品价格配置异常，暂时无法下单，请联系商家");
         }
 
         if ($commodity->shared) {
@@ -792,7 +806,7 @@ class Order implements \App\Service\Order
                 throw new JSONException('当前商品已停售');
             }
             $this->assertTradeCommoditySnapshot($commodity, $lockedCommodity);
-            $this->lockLocalDraftCardForOrder($lockedCommodity, $cardId);
+            $this->lockLocalDraftCardForOrder($lockedCommodity, $cardId, (string)$race, is_array($sku) ? $sku : []);
 
             if (((int)$lockedCommodity->only_user === 1 || (int)$lockedCommodity->purchase_count > 0) && $owner === 0) {
                 throw new JSONException('请先登录后再购买哦');
@@ -1016,22 +1030,26 @@ class Order implements \App\Service\Order
             require($autoload);
         }
 
-        if ($callback[\App\Consts\Pay::IS_SIGN]) {
-            if (!self::payCredentialConfigured($payConfig)) {
-                self::callbackFail($handle, "credential", self::CALLBACK_REJECT, $tradeNo, $map, "支付凭据未配置，拒绝回调");
-            }
-            $class = "\\App\\Pay\\{$handle}\\Impl\\Signature";
-            if (!class_exists($class)) {
-                self::callbackFail($handle, "plugin", self::CALLBACK_REJECT, $tradeNo, $map, "插件未实现接口");
-            }
-            $signature = new $class;
-            Context::set(\App\Consts\Pay::DAFA, $map);
-            if (!$signature->verification($map, $payConfig)) {
-                self::callbackFail($handle, "sign", self::CALLBACK_REJECT, $tradeNo, $map, "签名验证失败");
-            }
-
-            $map = Context::get(\App\Consts\Pay::DAFA);
+        //未声明验签（false/漏写）的插件一律拒绝，与兼容路由 LegacyPayCallback 一致：
+        //否则回调报文全由请求方构造，订单号/金额校验都形同虚设，可伪造支付成功、无限充值。
+        if (empty($callback[\App\Consts\Pay::IS_SIGN])) {
+            self::callbackFail($handle, "plugin", self::CALLBACK_REJECT, $tradeNo, $map, "插件未声明回调验签，拒绝回调");
         }
+
+        if (!self::payCredentialConfigured($payConfig)) {
+            self::callbackFail($handle, "credential", self::CALLBACK_REJECT, $tradeNo, $map, "支付凭据未配置，拒绝回调");
+        }
+        $class = "\\App\\Pay\\{$handle}\\Impl\\Signature";
+        if (!class_exists($class)) {
+            self::callbackFail($handle, "plugin", self::CALLBACK_REJECT, $tradeNo, $map, "插件未实现接口");
+        }
+        $signature = new $class;
+        Context::set(\App\Consts\Pay::DAFA, $map);
+        if (!$signature->verification($map, $payConfig)) {
+            self::callbackFail($handle, "sign", self::CALLBACK_REJECT, $tradeNo, $map, "签名验证失败");
+        }
+
+        $map = Context::get(\App\Consts\Pay::DAFA);
 
         if ($callback[\App\Consts\Pay::IS_STATUS]) {
             if ((string)($map[$callback[\App\Consts\Pay::FIELD_STATUS_KEY]] ?? '') !== (string)$callback[\App\Consts\Pay::FIELD_STATUS_VALUE]) {
@@ -1149,6 +1167,10 @@ class Order implements \App\Service\Order
             return DB::transaction(function () use ($order, $draft, $soldOut): string {
                 $locked = Card::query()->whereKey($draft->id)->lockForUpdate()->first();
                 if (!$locked || (int)$locked->status !== 0) {
+                    return $soldOut;
+                }
+                //发货前再比对一次规格：下单时已拦，这里防后台改过卡密规格或绕过下单校验的订单
+                if ((float)$order->amount > 0 && !$locked->matchesSpec((string)$order->race, is_array($order->sku) ? $order->sku : [])) {
                     return $soldOut;
                 }
                 $locked->purchase_time = $order->pay_time;

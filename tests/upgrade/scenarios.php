@@ -204,6 +204,54 @@ if ($action === 'seed') {
     check($recharges->callback($route, payload($order['tradeNo'], (string)$gateway['amount'], $key)) === 'success', 'New recharge payment failed');
     check($recharges->callback($route, payload($order['tradeNo'], (string)$gateway['amount'], $key)) === 'success', 'New recharge duplicate failed');
     check((float)$db->table('user')->where('id', 1000)->value('balance') === $before + 10, 'New recharge credited fee or duplicated');
+} elseif ($action === 'security') {
+    $db->table('config')->updateOrInsert(['key' => 'callback_domain'], ['value' => 'https://notify.invalid']);
+    @unlink(BASE_PATH . '/runtime/config');
+    $db->table('pay')->where('id', 2)->update(['commodity' => 1]);
+    $base = ['item_id' => 1, 'device' => 0, 'num' => 1, 'pay_id' => 2, 'contact' => 'test-buyer', 'password' => '',
+        'card_id' => 0, 'coupon' => '', 'race' => '', 'request_no' => '', 'sku' => []];
+    $amountOf = fn(string $trade) => (array)$db->table('order')->where('trade_no', $trade)->first(['amount', 'rebate', 'divide_amount']);
+
+    // 预选卡必须属于所选规格：不能按便宜规格的价买走贵规格的卡
+    $db->table('commodity')->where('id', 1)->update(['price' => 1, 'user_price' => 0, 'owner' => 0, 'level_disable' => 0,
+        'draft_status' => 1, 'draft_premium' => 0, 'contact_type' => 0, 'password_status' => 0, 'config' => "[category]\nA=1\nB=100"]);
+    $card = fn(string $race) => (int)$db->table('card')->insertGetId(['commodity_id' => 1, 'secret' => 'spec-' . $race . '-' . uniqid(),
+        'race' => $race, 'create_time' => date('Y-m-d H:i:s')]);
+    $card('A');
+    $dear = $card('B');
+    rejected(fn() => orderService()->trade(null, null, ['race' => 'A', 'card_id' => $dear] + $base), 'Draft card of another race sold at the cheaper price');
+    $order = orderService()->trade(null, null, ['race' => 'B', 'card_id' => $dear] + $base);
+    check((float)$amountOf($order['tradeNo'])['amount'] >= 100, 'Draft card of matching race priced wrong');
+
+    // 推广人价高于买家价时，商户返利不能被抬到超过实付
+    $db->table('commodity')->where('id', 1)->update(['config' => '', 'draft_status' => 0, 'owner' => 1000, 'price' => 1, 'user_price' => 100]);
+    $db->table('user')->where('id', 1000)->update(['business_level' => 1]);
+    $db->table('user')->insertOrIgnore(['id' => 1001, 'username' => 'promoter', 'password' => str_repeat('a', 32),
+        'salt' => 'test', 'app_key' => 'test2', 'create_time' => date('Y-m-d H:i:s'), 'status' => 1]);
+    $_COOKIE['promotion_from'] = '1001';
+    $order = orderService()->trade(null, null, $base);
+    unset($_COOKIE['promotion_from']);
+    $row = $amountOf($order['tradeNo']);
+    check((float)$row['rebate'] + (float)$row['divide_amount'] <= (float)$row['amount'], 'Rebate plus commission exceeds paid amount: ' . json_encode($row));
+    $db->table('commodity')->where('id', 1)->update(['owner' => 0, 'price' => 10, 'user_price' => 0]);
+
+    // 未声明验签的支付插件，回调一律拒绝
+    $info = BASE_PATH . '/app/Pay/Epay/Config/Info.php';
+    $original = file_get_contents($info);
+    $order = orderService()->trade(null, null, $base);
+    $gateway = json_decode(file_get_contents(BASE_PATH . '/runtime/test-gateway.json'), true);
+    try {
+        file_put_contents($info, str_replace('Pay::IS_SIGN => true', 'Pay::IS_SIGN => false', $original));
+        check(str_contains(file_get_contents($info), 'IS_SIGN => false'), 'Fixture did not disable IS_SIGN');
+        rejected(fn() => orderService()->callback($order['tradeNo'], payload($order['tradeNo'], (string)$gateway['amount'], 'forged')), 'Unsigned plugin callback accepted');
+    } finally {
+        file_put_contents($info, $original);
+    }
+    check((int)$db->table('order')->where('trade_no', $order['tradeNo'])->value('status') === 0, 'Forged callback paid the order');
+
+    // 蜜罐计数不能被会员经 personal() 的 plugin[] 写回
+    check(str_contains(file_get_contents(BASE_PATH . '/app/Controller/User/Api/Security.php'), "'risk_transfer_count',"), 'Honeypot counter writable by members');
+    print("PASS security regressions\n");
 } elseif ($action === 'rollback_config') {
     $controller = new App\Controller\Admin\Api\Pay();
     $request = new Kernel\Context\Request();

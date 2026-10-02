@@ -81,6 +81,8 @@ class Security extends User
             'totp_secret',
             'totp_recovery',
             'fund_2fa',
+            //蜜罐计数必须只增不减：会员能写回 0 就永远到不了封禁阈值，可单号吃光全站蜜罐额度
+            'risk_transfer_count',
             'id'
         ];
 

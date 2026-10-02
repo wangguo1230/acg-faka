@@ -190,6 +190,7 @@ def main():
             assert (root / 'config/database.php').read_bytes() == config_before, 'Database config overwritten'
             step('assert_migration')
             print(image_php(args.image, 'trades').strip(), flush=True)
+            print(image_php(args.image, 'security').strip(), flush=True)
             command(['docker', 'restart', app])
             for _ in range(60):
                 if subprocess.run(['docker', 'exec', app, 'php', '/usr/local/bin/acg-faka-healthcheck.php'], capture_output=True).returncode == 0:

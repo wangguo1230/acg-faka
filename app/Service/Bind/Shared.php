@@ -71,7 +71,9 @@ class Shared implements \App\Service\Shared
 
     private function request(string $url, string $appId, string $appKey, array $data, bool $optional): ?array
     {
-        $data = array_merge($data, ["app_id" => $appId, "app_key" => $appKey]);
+        //app_key 只用来算签名、绝不随报文发出：服务端从不读这个字段，明文带上只会让 http 链路、
+        //上游/反代/WAF 的请求日志泄露密钥，拿到即可花本站在上游的余额下单、拉走历史卡密。
+        $data = array_merge($data, ["app_id" => $appId]);
         $data['sign'] = Str::generateSignature($data, $appKey);
         try {
             $response = Http::make()->post($url, [
