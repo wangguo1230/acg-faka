@@ -308,6 +308,18 @@ try {
     });
     $ensureForeign('user_log', 'user_id', 'user');
 
+    // —— 3.8.2 新表：会员对接来源 IP 白名单 ——
+    $createTable('user_ip_whitelist', static function ($t) {
+        $t->increments('id');
+        $t->unsignedInteger('user_id');
+        $t->string('ip', 64);
+        $t->string('note', 32)->default('');
+        $t->dateTime('create_time');
+        $t->dateTime('last_used_time')->nullable();
+        $t->unique(['user_id', 'ip'], 'user_ip');
+    });
+    $ensureForeign('user_ip_whitelist', 'user_id', 'user');
+
     $createTable('lang', static function ($t) {
         $t->increments('id');
         $t->char('hash', 32);
