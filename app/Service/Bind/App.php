@@ -146,13 +146,13 @@ class App implements \App\Service\App
      * key 会被直接拼进文件系统路径（app/Plugin/{key}/、app/Pay/{key}/、Theme/{key}/），
      * 且经历 mkdir / Zip::unzip / File::delDirectory。控制器把 $_POST['plugin_key'] 原样下传，
      * 未加校验时 `../../public` 之类可越出插件目录，导致任意目录删除或向 webroot 写入（CWE-22）。
-     * 插件 key 本就只应是 [A-Za-z0-9_]，这里强制白名单。
+     * 白名单与上游一致 [A-Za-z0-9_-]：应用商店存在带连字符的插件 key，连字符不构成遍历。
      *
      * @throws JSONException
      */
     private function assertPluginKey(string $key): void
     {
-        if ($key === '' || !preg_match('/^[A-Za-z0-9_]+$/', $key)) {
+        if ($key === '' || !preg_match('/^[A-Za-z0-9_-]+$/', $key)) {
             throw new JSONException("非法的插件标识");
         }
     }

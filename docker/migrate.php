@@ -179,6 +179,11 @@ try {
         $t->unsignedTinyInteger('fund_2fa')->default(0);
     });
 
+    // —— 列：3.8.3 增量（手动发货商品「付款即发货」）——
+    $addColumn('commodity', 'delivery_auto', static function ($t) {
+        $t->unsignedTinyInteger('delivery_auto')->default(0);
+    });
+
     // —— 新表 ——
     $createTable('pay_config', static function ($t) {
         $t->increments('id');

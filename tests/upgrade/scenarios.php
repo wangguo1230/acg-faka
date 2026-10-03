@@ -89,7 +89,7 @@ if ($action === 'seed') {
     foreach (['manage_webauthn', 'user_webauthn', 'user_session', 'user_log', 'user_ip_whitelist'] as $table) {
         check($schema->hasTable($table), "3.8.x table {$table} missing");
     }
-    foreach (['commodity' => ['substation_disable', 'ban', 'ban_reason'], 'user' => ['totp_secret', 'totp_recovery', 'fund_2fa'],
+    foreach (['commodity' => ['substation_disable', 'ban', 'ban_reason', 'delivery_auto'], 'user' => ['totp_secret', 'totp_recovery', 'fund_2fa'],
                  'manage_session' => ['last_active_time']] as $table => $columns) {
         check($schema->hasColumns($table, $columns), "3.8.1 columns on {$table} missing");
     }
