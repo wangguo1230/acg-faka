@@ -184,6 +184,30 @@ try {
         $t->unsignedTinyInteger('delivery_auto')->default(0);
     });
 
+    // —— 3.8.4 新表：文件卡密归档 ——
+    // 生产容器不会重跑 Install.sql，必须在启动迁移里主动建表；否则上传入口只能在
+    // Web 请求中临时尝试 DDL，权限不足时会表现成文件卡密功能不可用。
+    $createTable('card_file', static function ($t) {
+        $t->increments('id');
+        $t->unsignedInteger('card_id')->nullable()->default(null);
+        $t->unsignedInteger('order_id')->nullable()->default(null);
+        $t->unsignedInteger('owner')->default(0);
+        $t->char('token', 48);
+        $t->string('path', 160);
+        $t->string('name', 255);
+        $t->unsignedBigInteger('size')->default(0);
+        $t->char('hash', 64);
+        $t->unsignedInteger('downloads')->default(0);
+        $t->dateTime('last_download_time')->nullable()->default(null);
+        $t->dateTime('create_time');
+        $t->unique('token', 'token');
+        $t->unique('card_id', 'card_id');
+        $t->index('order_id', 'order_id');
+        $t->index('owner', 'owner');
+        $t->index('hash', 'hash');
+        $t->index('create_time', 'create_time');
+    }, true);
+
     // —— 新表 ——
     $createTable('pay_config', static function ($t) {
         $t->increments('id');

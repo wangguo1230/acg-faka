@@ -14,6 +14,7 @@ mkdir -p \
     config \
     kernel/Install/OS \
     kernel/Install/Update \
+    runtime/card-file \
     runtime/log \
     runtime/plugin \
     runtime/request \

@@ -1,6 +1,19 @@
-FROM php:8.2-apache
+# docker-deploy 保持 Apache 与现有多卷升级模型；PHP 版本默认使用仍受支持的 8.2。
+ARG PHP_VERSION=8.2
+FROM php:${PHP_VERSION}-apache
 
 ENV APACHE_DOCUMENT_ROOT=/var/www/html
+
+# 打入上游 3.8.4 的 session 对象注入硬化补丁。session 是静态扩展，必须先重编
+# PHP，再编译下面的动态扩展。
+COPY docker/php-patches/ /usr/local/share/acg-faka/php-patches/
+COPY docker/php-rebuild.sh /usr/local/bin/acg-php-rebuild
+RUN sh /usr/local/bin/acg-php-rebuild /usr/local/share/acg-faka/php-patches
+
+# 未包含 CVE-2026-109618/109619 官方修补的 PHP 基础镜像拒绝构建。
+# docker-deploy 使用 Apache，不能套用上游仅针对 php-fpm/nginx 的临时缓解，因此不提供放行开关。
+COPY docker/php-cve-gate.sh /usr/local/bin/acg-php-cve-gate
+RUN sh /usr/local/bin/acg-php-cve-gate
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -48,6 +61,7 @@ RUN mkdir -p \
         /var/www/html/app/View/User/Theme \
         /var/www/html/kernel/Install/OS \
         /var/www/html/kernel/Install/Update \
+        /var/www/html/runtime/card-file \
         /var/www/html/runtime/log \
         /var/www/html/runtime/plugin \
         /var/www/html/runtime/request \

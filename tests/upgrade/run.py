@@ -24,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--image', default='acg-faka:3.7.6-upgrade-fixed', help='Local upgrade image built from this checkout')
     parser.add_argument('--mysql-image', default='mysql:8.0')
+    parser.add_argument('--platform', default='linux/amd64', help='Platform used to run application images')
     parser.add_argument('--rollback-image', help='Also test the compatibility rollback image')
     parser.add_argument('--images-only', action='store_true', help='Run only application image smoke checks')
     args = parser.parse_args()
@@ -53,7 +54,7 @@ def main():
             target = root / 'app/Pay/Epay' / destination / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / 'tests/upgrade/fixtures' / name, target)
-        php_base = ['docker', 'run', '--rm', '--platform', 'linux/amd64', '--network', network,
+        php_base = ['docker', 'run', '--rm', '--platform', args.platform, '--network', network,
                     '--entrypoint', 'php', '-v', f'{root}:/var/www/html', args.image,
                     '-d', 'error_reporting=22527']
 
@@ -68,7 +69,7 @@ def main():
             mounts += ['-v', f'{root / path}:/var/www/html/{path}']
 
         def image_php(image, action):
-            return command(['docker', 'run', '--rm', '--platform', 'linux/amd64', '--network', network,
+            return command(['docker', 'run', '--rm', '--platform', args.platform, '--network', network,
                             '--entrypoint', 'php', *mounts, '-v', f'{root}/tests/upgrade:/review:ro', image,
                             '-d', 'error_reporting=22527', '/review/scenarios.php', action])
 
@@ -177,7 +178,7 @@ def main():
             setting.write_text("<?php return ['test_setting'=>'preserve-me'];")
             settings_before = setting.read_bytes()
             config_before = (root / 'config/database.php').read_bytes()
-            command(['docker', 'run', '-d', '--name', app, '--platform', 'linux/amd64', '--network', network,
+            command(['docker', 'run', '-d', '--name', app, '--platform', args.platform, '--network', network,
                      *mounts, args.image])
             for _ in range(60):
                 probe = subprocess.run(['docker', 'exec', app, 'php', '/usr/local/bin/acg-faka-healthcheck.php'], capture_output=True)
@@ -202,7 +203,7 @@ def main():
             command(['docker', 'rm', '-f', app])
             print('PASS container startup, restart, healthcheck and persisted configuration', flush=True)
             if args.rollback_image:
-                command(['docker', 'run', '-d', '--name', app, '--platform', 'linux/amd64', '--network', network,
+                command(['docker', 'run', '-d', '--name', app, '--platform', args.platform, '--network', network,
                          *mounts, args.rollback_image])
                 for _ in range(60):
                     probe = subprocess.run(['docker', 'exec', app, 'php', '/usr/local/bin/acg-faka-rollback-healthcheck.php'], capture_output=True)

@@ -86,7 +86,7 @@ if ($action === 'seed') {
     check(App\Util\Csp::mode() === 'report', 'Upgrade unexpectedly enabled enforcing CSP');
     check($db->table('docker_migration')->count() === 1, 'Migration completion missing');
     $schema = $db->getSchemaBuilder();
-    foreach (['manage_webauthn', 'user_webauthn', 'user_session', 'user_log', 'user_ip_whitelist'] as $table) {
+    foreach (['manage_webauthn', 'user_webauthn', 'user_session', 'user_log', 'user_ip_whitelist', 'card_file'] as $table) {
         check($schema->hasTable($table), "3.8.x table {$table} missing");
     }
     foreach (['commodity' => ['substation_disable', 'ban', 'ban_reason', 'delivery_auto'], 'user' => ['totp_secret', 'totp_recovery', 'fund_2fa'],
