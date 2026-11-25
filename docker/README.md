@@ -20,6 +20,18 @@
 
 容器启动脚本会自动修复这些持久化目录的 `www-data` 写权限，避免应用商店显示“安装成功”但实际解压不到插件目录、上传目录无法创建、站点 Logo 无法覆盖等问题。
 
+## 构建时刷新系统安全更新
+
+本生产分支保留 PHP 8.2 + Apache。已合入主分支的系统包安全刷新机制：本地发布脚本和手动 CI 每次构建都会刷新系统安全包；PHP 重编层仍可使用缓存。
+
+`docker/nginx-cve-gate.sh` 保留上游实现，镜像实际安装 nginx 时才检查其 Debian 修补版本；Apache 镜像不会因此安装 nginx。前置 OpenResty 由服务器单独管理，此镜像更新不替代其升级。
+
+单独使用 Docker 构建时，可显式刷新该层：
+
+```bash
+docker build --build-arg SECURITY_REFRESH="$(date -u +%Y%m%dT%H%M%SZ)" -t acg-faka:candidate .
+```
+
 ## 启动
 
 ```bash
