@@ -42,6 +42,19 @@ RUN apt-get update \
     && a2enconf server-name \
     && rm -rf /var/lib/apt/lists/*
 
+# 每次发布刷新系统安全包，避免基础镜像/构建缓存长期保留旧修补版本。
+# 本分支使用 Apache；只有实际安装了 nginx 时才执行上游的 nginx 版本闸门。
+ARG SECURITY_REFRESH=
+COPY docker/nginx-cve-gate.sh /usr/local/bin/acg-nginx-cve-gate
+RUN set -eux; \
+    echo "[acg-faka] security refresh: ${SECURITY_REFRESH:-local}"; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold; \
+    rm -rf /var/lib/apt/lists/*; \
+    if command -v nginx >/dev/null 2>&1; then sh /usr/local/bin/acg-nginx-cve-gate; fi; \
+    apache2ctl -t
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html

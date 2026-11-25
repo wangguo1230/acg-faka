@@ -37,6 +37,7 @@ echo "==> 构建镜像 ${IMAGE}  (version=${VERSION} branch=${BRANCH} sha=${SHA}
 printf '    标签:'; for t in "${TAGS[@]}"; do printf ' %s' "$t"; done; echo
 
 docker build --platform "$PLATFORM" -f Dockerfile "${TAG_ARGS[@]}" \
+  --build-arg "SECURITY_REFRESH=$(date -u +%Y%m%dT%H%M%SZ)" \
   --label "org.opencontainers.image.version=${VERSION}" \
   --label "org.opencontainers.image.revision=${SHA}" \
   --label "org.opencontainers.image.source=https://github.com/wangguo1230/acg-faka" \
