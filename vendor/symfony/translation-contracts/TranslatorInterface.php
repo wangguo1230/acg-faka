@@ -12,6 +12,8 @@
 namespace Symfony\Contracts\Translation;
 
 /**
+ * Translates messages into the current or a given locale.
+ *
  * @author Fabien Potencier <fabien@symfony.com>
  */
 interface TranslatorInterface
@@ -59,7 +61,7 @@ interface TranslatorInterface
      *
      * @throws \InvalidArgumentException If the locale contains invalid characters
      */
-    public function trans(string $id, array $parameters = [], string $domain = null, string $locale = null): string;
+    public function trans(string $id, array $parameters = [], ?string $domain = null, ?string $locale = null): string;
 
     /**
      * Returns the default locale.

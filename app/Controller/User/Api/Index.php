@@ -20,6 +20,7 @@ use App\Service\Shared;
 use App\Service\Shop;
 use App\Util\CardFile\Link;
 use App\Util\Client;
+use App\Util\OrderAccess;
 use App\Util\Throttle;
 use App\Util\Tree;
 use Illuminate\Database\Eloquent\Builder;
@@ -546,7 +547,10 @@ class Index extends User
         $get->setPaginate((int)$this->request->post("page"), (int)$this->request->post("limit"));
         $get->setColumn('id', 'trade_no', 'sku', 'secret', 'user_id', 'password', 'amount', 'pay_id', 'commodity_id', 'create_time', 'pay_time', 'delivery_status', 'status', 'card_num', 'contact', "race");
 
-        $data = $this->query->get($get, function (Builder $builder) use ($keywords, $keywordsCandidates) {
+        $buyer = $this->getUser();
+        $data = $this->query->get($get, function (Builder $builder) use ($keywords, $keywordsCandidates, $buyer) {
+            // Scope before counting or fetching: knowing a member's order number/contact does not grant access.
+            $builder = OrderAccess::visibleToBuyer($builder, $buyer);
 
             $builder = $builder->with(['pay' => function (Relation $relation) {
                 $relation->select(['id', 'name', 'icon']);
@@ -576,7 +580,7 @@ class Index extends User
 
             if (!empty($item['password'])) {
                 $item['password'] = true;
-                unset($item['secret']);
+                unset($item['secret'], $item['leave_message'], $item['commodity']['leave_message']);
             }
         }
         unset($item);
@@ -612,9 +616,7 @@ class Index extends User
 
         $order = Order::with(['commodity'])->where("trade_no", $tradeNo)->first();
 
-        if (!$order) {
-            throw new JSONException("未查询到相关信息");
-        }
+        OrderAccess::assertCanRead($order, $this->getUser());
 
         if (!empty($order->password)) {
             //候选一：当前管线的值（新订单）；候选二：旧清洗管线重放值（3.5.8 及以前的订单，

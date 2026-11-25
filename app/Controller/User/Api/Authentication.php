@@ -366,7 +366,7 @@ class Authentication extends User
         hook(Hook::USER_API_AUTH_LOGIN_BEGIN);
 
         //登录爆破/撞库限流：验证码已改为一次性（见 Captcha::check），此处再加频率闸。
-        //按来源 IP 计数，挡住单一来源的横向喷洒；成功登录后清零。
+        //来源 IP 的总尝试预算不因登录成功而清零，防止用自建账号重置爆破预算。
         $ip = Client::getAddress();
         if (Throttle::tooMany("login:ip:{$ip}", 30, 300)) {
             throw new JSONException("登录尝试过于频繁，请稍后再试");
@@ -383,9 +383,13 @@ class Authentication extends User
             throw new JSONException("账号或密码错误");
         }
 
-        //按「账号+IP」再加一道，挡住盯着某个账号猛试的爆破（跨 IP 分布式仍靠上面的 IP 闸兜底）
-        $userThrottleKey = "login:user:" . md5(strtolower($username)) . ":{$ip}";
-        if (Throttle::tooMany($userThrottleKey, 10, 300)) {
+        $user = AccountResolver::resolve($username);
+        //数据库排序规则会把大小写、重音和账号别名解析为同一会员，限流也必须按解析后的 ID 归并。
+        $account = $user !== null ? 'id:' . (int)$user->id : 'unknown:' . hash('sha256', strtolower($username));
+        $userThrottleKey = "login:account:{$account}:ip:{$ip}";
+        $accountThrottleKey = "login:account:{$account}";
+        if (Throttle::tooMany($userThrottleKey, 10, 300)
+            || ($user !== null && Throttle::tooMany($accountThrottleKey, 30, 300))) {
             throw new JSONException("登录尝试过于频繁，请稍后再试");
         }
 
@@ -393,8 +397,6 @@ class Authentication extends User
         if (!isset($_POST['password']) || !Validation::password((string)$_POST['password'])) {
             throw new JSONException("账号或密码错误");
         }
-
-        $user = AccountResolver::resolve($username);
 
         if (!$user) {
             Str::burnPasswordCheck((string)$_POST['password']);
@@ -428,9 +430,9 @@ class Authentication extends User
 
         $this->sso->loginSuccess($user, $remember);
 
-        //登录成功，清空该 IP / 账号的失败计数，避免影响后续正常登录
-        Throttle::clear("login:ip:{$ip}");
+        //只恢复本会员的预算；不能让成功登录账号 A 的请求清空账号 B 所在来源的预算。
         Throttle::clear($userThrottleKey);
+        Throttle::clear($accountThrottleKey);
 
         Captcha::destroy("login");
         return $this->json(200, "登录成功");

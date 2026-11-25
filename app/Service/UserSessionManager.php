@@ -121,6 +121,19 @@ final class UserSessionManager
 
         if ($touch) {
             self::touch($session);
+            // Upgrade existing browser cookies too; a remembered session may
+            // otherwise retain its old JavaScript-readable flags for a year.
+            if (PHP_SAPI !== 'cli' && !headers_sent()
+                && hash_equals((string)($_COOKIE[\App\Consts\User::SESSION] ?? ''), $encodedCookie)) {
+                setcookie(\App\Consts\User::SESSION, $encodedCookie, [
+                    'expires' => (int)$claims->exp,
+                    'path' => '/',
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                    'secure' => Client::isSecureRequest(),
+                ]);
+                header('Cache-Control: private, no-store');
+            }
         }
 
         return ['user' => $user, 'session' => $session];

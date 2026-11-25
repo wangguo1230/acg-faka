@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="description" content="币安 C2C 买入 USDT 的中文分步教程：找到买币入口、选择金额与付款方式、实际转账、通知卖家并核对到账。">
+    <meta name="color-scheme" content="light dark">
+    <title>币安 C2C 买币教程 - #{$config.shop_name}</title>
+    <link rel="icon" href="#{$favicon}">
+    <link rel="stylesheet" href="/assets/user/tutorials/binance.css?v=20261108-2">
+    <script src="/assets/user/tutorials/binance.js?v=20261108-1" defer></script>
+</head>
+<body id="top">
+<a class="skip-link" href="#steps">跳到买币步骤</a>
+<header class="guide-header">
+    <div class="guide-header__inner">
+        <a class="guide-brand" href="/">
+            <img src="#{$favicon}" width="32" height="32" alt="">
+            <span>#{$config.shop_name}</span>
+        </a>
+        <nav class="guide-nav" aria-label="网站导航">
+            <a href="/">商城</a>
+            <a href="/user/index/query">订单查询</a>
+            <a href="/user/tutorial/binance" aria-current="page">买币教程</a>
+        </nav>
+    </div>
+</header>
+
+<main class="guide-main">
+    <section class="guide-hero" aria-labelledby="page-title">
+        <div class="guide-hero__copy">
+            <p class="guide-category"><span aria-hidden="true"></span>币安 App · C2C 买币</p>
+            <h1 id="page-title">用人民币买 USDT，<br>一步一步来。</h1>
+            <p class="guide-intro">从找到买币入口，到确认 USDT 到账。跟着六步操作，第一次也能看明白。</p>
+            <a class="guide-button" href="#step-1">开始看教程 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6"/></svg></a>
+        </div>
+        <div class="guide-route" aria-label="买币流程：用人民币向 C2C 卖家付款，卖家确认后，USDT 进入币安资金账户">
+            <div class="guide-route__visual" aria-hidden="true">
+                <span class="guide-coin guide-coin--cny">¥</span>
+                <span class="guide-route__arrow"><svg viewBox="0 0 80 24"><path d="M1 12h74m-9-9 10 9-10 9"/></svg><small>C2C 交易</small></span>
+                <span class="guide-coin guide-coin--usdt">₮</span>
+            </div>
+            <div class="guide-route__labels"><span>支付人民币</span><span>收到 USDT</span></div>
+            <p>买币完成后，USDT 会先进入你的币安账户。</p>
+            <span class="guide-route__note">本篇终点：核对买币到账</span>
+        </div>
+    </section>
+
+    <section class="guide-prepare" aria-labelledby="prepare-title">
+        <div>
+            <h2 id="prepare-title">开始前，先准备好</h2>
+            <ul class="guide-checklist">
+                <li>币安账户：已登录，并完成平台要求的身份认证。</li>
+                <li>本人实名付款账户：可使用本笔订单支持的付款方式。</li>
+            </ul>
+            <p class="guide-small">服务是否可用，以你所在地区及账户实际显示为准。</p>
+        </div>
+        <div class="guide-download">
+            <span class="guide-download__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 18h4"/></svg></span>
+            <div>
+                <h3>还没安装币安？</h3>
+                <p>从官网选择适合手机的版本。</p>
+                <a href="https://www.binance.com/zh-CN/download" target="_blank" rel="noopener noreferrer">打开币安官方下载页 <span aria-hidden="true">↗</span></a>
+                <p class="guide-download__ios"><strong>iPhone / iOS 提示：</strong>App Store 需使用<strong>非中国大陆地区的 Apple ID</strong>，且该地区已上架币安 App。这里指 App Store 账号地区。<a href="https://www.binance.com/zh-CN/download-guide" target="_blank" rel="noopener noreferrer">查看 iOS 官方安装指引 <span aria-hidden="true">↗</span></a></p>
+            </div>
+        </div>
+    </section>
+
+    <p class="guide-context">下面配图为原创操作示意。按钮位置可能随 App 版本变化，金额、报价与交易条件请读取自己的实时订单。</p>
+
+    <div class="guide-reading" id="steps">
+        <aside class="guide-sidebar">
+            <details class="guide-toc" open>
+                <summary><span>六步买币</span><span class="guide-toc__status" aria-hidden="true">选择步骤 <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span></summary>
+                <nav aria-label="教程步骤">
+                    <a href="#step-1" aria-current="step"><span>01</span>找到买币入口</a>
+                    <a href="#step-2"><span>02</span>选择 USDT</a>
+                    <a href="#step-3"><span>03</span>确认金额与方式</a>
+                    <a href="#step-4"><span>04</span>核对订单并转账</a>
+                    <a href="#step-5"><span>05</span>通知卖家已付款</a>
+                    <a href="#step-6"><span>06</span>查看 USDT 到账</a>
+                </nav>
+                <div class="guide-toc__foot"><span data-current-step>当前第 1 步，共 6 步</span><a href="#questions">遇到问题？</a></div>
+            </details>
+        </aside>
+
+        <div class="guide-article">
+            <section class="guide-step" id="step-1" aria-labelledby="step-title-1">
+                <div class="guide-step__copy">
+                    <p class="guide-step__number"><b>01</b><span>/ 06</span></p>
+                    <h2 id="step-title-1">先打开<br>「C2C 买币」</h2>
+                    <p>登录币安 App，在首页找到<strong>添加资金</strong>，再进入 <strong>C2C 买币</strong>。</p>
+                    <p>如果首页布局不同，可以在 App 内搜索「C2C」。确认进入的是买入加密货币的页面。</p>
+                    <div class="guide-path"><span>币安首页</span><span aria-hidden="true">›</span><strong>添加资金</strong><span aria-hidden="true">›</span><span>C2C 买币</span></div>
+                </div>
+                <figure class="guide-figure">
+                    <a href="/assets/user/tutorials/images/step-01.svg" target="_blank" rel="noopener noreferrer" data-guide-image aria-label="放大第 1 步操作示意图">
+                        <img src="/assets/user/tutorials/images/step-01.svg" width="420" height="510" alt="操作示意：在币安首页找到添加资金，再选择 C2C 买币。" fetchpriority="high">
+                        <span class="guide-figure__zoom" aria-hidden="true">放大查看 <svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></span>
+                    </a>
+                    <figcaption>找到入口即可，不需要操作现货或合约交易。</figcaption>
+                </figure>
+            </section>
+
+            <section class="guide-step" id="step-2" aria-labelledby="step-title-2">
+                <div class="guide-step__copy">
+                    <p class="guide-step__number"><b>02</b><span>/ 06</span></p>
+                    <h2 id="step-title-2">确认买入的币种<br>是 USDT</h2>
+                    <p>在 C2C 页面选择<strong>买入</strong>，将加密货币设为 <strong>USDT</strong>。使用人民币付款时，法币选择 <strong>CNY</strong>。</p>
+                    <p>想按金额匹配订单，可以使用「快捷区」；想自己筛选卖家，可以使用「自选区」。本篇按快捷区说明。</p>
+                    <div class="guide-note"><strong>核对三个选项</strong><p>买入 · USDT · CNY。请按自己的需求确认，别只看按钮颜色。</p></div>
+                </div>
+                <figure class="guide-figure">
+                    <a href="/assets/user/tutorials/images/step-02.svg" target="_blank" rel="noopener noreferrer" data-guide-image aria-label="放大第 2 步操作示意图">
+                        <img src="/assets/user/tutorials/images/step-02.svg" width="420" height="510" alt="操作示意：C2C 快捷区，选择买入、USDT 和 CNY。" loading="lazy">
+                        <span class="guide-figure__zoom" aria-hidden="true">放大查看 <svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></span>
+                    </a>
+                    <figcaption>快捷区和自选区的入口名称，以 App 为准。</figcaption>
+                </figure>
+            </section>
+
+            <section class="guide-step" id="step-3" aria-labelledby="step-title-3">
+                <div class="guide-step__copy">
+                    <p class="guide-step__number"><b>03</b><span>/ 06</span></p>
+                    <h2 id="step-title-3">填好金额，<br>选择付款方式</h2>
+                    <p>输入计划买入的金额，选择自己能够使用的付款方式，再查看最终报价、可收到的 USDT 数量和卖家条件。</p>
+                    <p>确认金额、限额和交易条款都适合自己，再提交这笔买币订单。</p>
+                    <div class="guide-note"><strong>看最终订单，不套固定汇率</strong><p>买币报价会变动。所需金额还应考虑后续使用时，平台实际显示的提现费用与最低限额。</p></div>
+                </div>
+                <figure class="guide-figure">
+                    <a href="/assets/user/tutorials/images/step-03.svg" target="_blank" rel="noopener noreferrer" data-guide-image aria-label="放大第 3 步操作示意图">
+                        <img src="/assets/user/tutorials/images/step-03.svg" width="420" height="510" alt="操作示意：填写买币金额、选择付款方式，并核对最终报价与卖家条件。" loading="lazy">
+                        <span class="guide-figure__zoom" aria-hidden="true">放大查看 <svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></span>
+                    </a>
+                    <figcaption>图示不提供实时价格，也不指定任何卖家。</figcaption>
+                </figure>
+            </section>
+
+            <section class="guide-step" id="step-4" aria-labelledby="step-title-4">
+                <div class="guide-step__copy">
+                    <p class="guide-step__number"><b>04</b><span>/ 06</span></p>
+                    <h2 id="step-title-4">读自己的订单，<br>再完成实际转账</h2>
+                    <p>打开该笔买币订单的<strong>付款详情</strong>，核对收款人、收款账号、应付金额及剩余付款时间。</p>
+                    <p>使用本人实名账户，按订单要求在对应支付应用中转账，并保存付款凭证。</p>
+                    <div class="guide-note guide-note--warning"><strong>收款信息只从本笔订单读取</strong><p>示意图没有真实收款账号。若收款信息异常，先通过币安订单客服核实。</p></div>
+                </div>
+                <figure class="guide-figure">
+                    <a href="/assets/user/tutorials/images/step-04.svg" target="_blank" rel="noopener noreferrer" data-guide-image aria-label="放大第 4 步操作示意图">
+                        <img src="/assets/user/tutorials/images/step-04.svg" width="420" height="510" alt="操作示意：从自己的订单核对收款人、账号、金额和付款时限，再实际转账并保留凭证。" loading="lazy">
+                        <span class="guide-figure__zoom" aria-hidden="true">放大查看 <svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></span>
+                    </a>
+                    <figcaption>全部信息以你的币安买币订单为准。</figcaption>
+                </figure>
+            </section>
+
+            <section class="guide-step" id="step-5" aria-labelledby="step-title-5">
+                <div class="guide-step__copy">
+                    <p class="guide-step__number"><b>05</b><span>/ 06</span></p>
+                    <h2 id="step-title-5">转账成功后，<br>回币安通知卖家</h2>
+                    <p>确认支付应用显示转账成功，再回到原买币订单，点击<strong>我已完成付款，通知卖家</strong>或同义按钮。</p>
+                    <p>之后等待卖家核实收款；需要联系对方时，使用这笔订单内的聊天功能。</p>
+                    <div class="guide-note guide-note--warning"><strong>「已付款」按钮只发送通知</strong><p>它不会替你扣款或转账。实际转账成功之后再点击，别把通知当作支付。</p></div>
+                </div>
+                <figure class="guide-figure">
+                    <a href="/assets/user/tutorials/images/step-05.svg" target="_blank" rel="noopener noreferrer" data-guide-image aria-label="放大第 5 步操作示意图">
+                        <img src="/assets/user/tutorials/images/step-05.svg" width="420" height="510" alt="操作示意：先确认真实转账成功，再回币安通知卖家，最后等待卖家核实收款。" loading="lazy">
+                        <span class="guide-figure__zoom" aria-hidden="true">放大查看 <svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></span>
+                    </a>
+                    <figcaption>先真实付款，再通知卖家。</figcaption>
+                </figure>
+            </section>
+
+            <section class="guide-step" id="step-6" aria-labelledby="step-title-6">
+                <div class="guide-step__copy">
+                    <p class="guide-step__number"><b>06</b><span>/ 06</span></p>
+                    <h2 id="step-title-6">核对 USDT 到账，<br>买币才算完成</h2>
+                    <p>卖家确认收款并放币后，查看这笔买币订单是否完成，再到币安<strong>资金账户</strong>核对 USDT 是否实际到账。</p>
+                    <p>「等待确认」表示仍在处理中。已转账但迟迟未放币，保留凭证，通过订单聊天、申诉或币安客服处理。</p>
+                    <div class="guide-note guide-note--warning"><strong>已付款的订单，谨慎取消</strong><p>在付款账户实际收到退款之前，不要自行取消已付款订单。</p></div>
+                </div>
+                <figure class="guide-figure">
+                    <a href="/assets/user/tutorials/images/step-06.svg" target="_blank" rel="noopener noreferrer" data-guide-image aria-label="放大第 6 步操作示意图">
+                        <img src="/assets/user/tutorials/images/step-06.svg" width="420" height="510" alt="操作示意：等待卖家放币，确认买币订单完成，并检查资金账户的 USDT 实际到账情况。" loading="lazy">
+                        <span class="guide-figure__zoom" aria-hidden="true">放大查看 <svg viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></span>
+                    </a>
+                    <figcaption>到账金额请读取自己的账户，不以示意图为凭证。</figcaption>
+                </figure>
+            </section>
+
+            <section class="guide-finish" aria-labelledby="finish-title">
+                <span class="guide-finish__check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg></span>
+                <div><h2 id="finish-title">确认到账，买币这一步就完成了。</h2><p>准备在本站使用时，先确认资产可提现，再创建支付订单。部分 C2C 买入资产可能受 T+1、T+2 或账户风控限制，以币安实际提示为准。</p><a class="guide-button" href="/">回到商城</a></div>
+            </section>
+        </div>
+    </div>
+
+    <section class="guide-questions" id="questions" aria-labelledby="questions-title">
+        <div class="guide-questions__intro"><h2 id="questions-title">卡在哪一步？</h2><p>先看看这些常见情况。</p></div>
+        <div class="guide-questions__list">
+            <details><summary>找不到 C2C 入口怎么办？</summary><p>先确认 App 已登录且身份认证符合要求，再搜索「C2C」或查看币安官方买币说明。入口随版本、地区和账户可用服务变化；若账户不支持，可通过币安客服核实。</p></details>
+            <details><summary>没有能用的付款方式，或金额不符合限额？</summary><p>调整金额、付款方式，或在自选区查看适合自己的广告。先读卖家条款，再下单；没有合适订单时，不必勉强成交。</p></details>
+            <details><summary>已经转账，但卖家还没有放币？</summary><p>检查是否已返回订单通知卖家。保留实际付款凭证，通过本笔订单聊天、申诉或币安客服跟进；未实际收到退款前，不要自行取消已付款订单。</p></details>
+            <details><summary>USDT 已到账，为什么暂时不能使用或提现？</summary><p>到账余额与可提现余额可能不同。部分资产会受到提现等待期或账户风控限制，具体范围和结束时间看币安提示。先确认可用情况，再生成有倒计时的本站支付订单。</p><a href="https://www.binance.com/zh-CN/support/faq/detail/360037261532" target="_blank" rel="noopener noreferrer">查看币安提现限制说明 ↗</a></details>
+        </div>
+    </section>
+
+    <footer class="guide-footer">
+        <div><strong>#{$config.shop_name} · 买币教程</strong><p>本站整理的中文操作指引，非币安官方页面。配图仅作操作示意。</p></div>
+        <details class="guide-sources"><summary>官方资料与更新日期</summary><ul><li><a href="https://www.binance.com/zh-CN/support/faq/detail/360039384951" target="_blank" rel="noopener noreferrer">币安：App 端通过 C2C 购买加密货币 ↗</a></li><li><a href="https://www.binance.com/zh-CN/support/faq/detail/360037261532" target="_blank" rel="noopener noreferrer">币安：T+1 和 T+2 提现限制 ↗</a></li><li><a href="https://www.binance.com/zh-CN/support/faq/detail/115003670492" target="_blank" rel="noopener noreferrer">币安：加密货币提现与费用说明 ↗</a></li></ul><p>核对日期：2026 年 11 月 8 日。功能入口、报价与规则可能变化，交易时以官方实时页面为准。</p></details>
+        <a class="guide-back-top" href="#top">返回顶部 ↑</a>
+    </footer>
+</main>
+
+<dialog class="guide-viewer" aria-labelledby="viewer-title">
+    <div class="guide-viewer__head"><h2 id="viewer-title">操作示意图</h2><button type="button" data-close-viewer aria-label="关闭放大图">关闭 <span aria-hidden="true">×</span></button></div>
+    <div class="guide-viewer__body"><img width="420" height="510" alt=""></div>
+    <p>操作示意，实际按钮及交易信息请以自己的订单为准。</p>
+</dialog>
+</body>
+</html>

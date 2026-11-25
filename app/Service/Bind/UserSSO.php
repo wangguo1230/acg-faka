@@ -68,10 +68,11 @@ class UserSSO implements \App\Service\UserSSO
         //会话令牌带随机 sid、数据库只存其哈希：脱库拿不到原文，无法伪造 cookie（旧设计仅凭密码哈希签名可被脱库伪造）。
         $issued = UserSessionManager::issue($user, time() + $sessionExpire);
 
-        //防 CSRF：跨站请求不携带会话。用户端保留可读性（部分主题前端会读取登录态），故不加 httponly。
+        //会话令牌只能由浏览器发送；页面登录态由服务端渲染，不能让脚本读取认证凭据。
         setcookie(\App\Consts\User::SESSION, $issued['cookie'], [
             'expires' => time() + $sessionExpire,
             'path' => '/',
+            'httponly' => true,
             'samesite' => 'Lax',
             'secure' => Client::isSecureRequest(),
         ]);

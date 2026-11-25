@@ -34,7 +34,7 @@ class SharedValidation implements InterceptorInterface
             throw new JSONException("商户ID不存在");
         }
         $user = User::query()->find($appId);
-        if (!$user) {
+        if (!$user || (int)$user->status !== 1 || (string)$user->app_key === '') {
             throw new JSONException("商户ID不存在");
         }
         $signature = Str::generateSignature($this->request->unsafePost(), $user->app_key);

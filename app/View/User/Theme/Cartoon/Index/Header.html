@@ -48,7 +48,7 @@
 
             <ul class="shop-nav__list">
                 #{foreach user_header_nav() as $nav}
-                    <li><a class="shop-nav__item #{if $nav.match}#{active($nav.match)}#{/if}" href="#{$nav.url}" target="#{$nav.target}">#{user_nav_icon($nav, 'nav-icon')}#{$nav.name}</a></li>
+                    <li><a class="shop-nav__item #{if $nav.match}#{active($nav.match)}#{/if}" href="#{$nav.url}" target="#{$nav.target}" #{if $nav.target == '_blank'}rel="noopener noreferrer"#{/if}>#{user_nav_icon($nav, 'nav-icon')}#{$nav.name}</a></li>
                 #{/foreach}
             </ul>
 
@@ -113,7 +113,7 @@
 <div class="shop-drawer">
     <a class="shop-drawer__brand" href="/"><img src="#{$favicon}" alt="logo"><span>#{$config.shop_name}</span></a>
     #{foreach user_header_nav() as $nav}
-        <a class="shop-drawer__link #{if $nav.match}#{active($nav.match)}#{/if}" href="#{$nav.url}" target="#{$nav.target}">#{user_nav_icon($nav, 'nav-icon')}#{$nav.name}</a>
+        <a class="shop-drawer__link #{if $nav.match}#{active($nav.match)}#{/if}" href="#{$nav.url}" target="#{$nav.target}" #{if $nav.target == '_blank'}rel="noopener noreferrer"#{/if}>#{user_nav_icon($nav, 'nav-icon')}#{$nav.name}</a>
     #{/foreach}
     #{if $config.service_url}
         <a class="shop-drawer__link" href="#{$config.service_url}" target="_blank" rel="noopener noreferrer"><i class="fa-duotone fa-regular fa-headset"></i>#{t("联系客服")}</a>

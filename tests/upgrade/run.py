@@ -70,6 +70,7 @@ def main():
 
         def image_php(image, action):
             return command(['docker', 'run', '--rm', '--platform', args.platform, '--network', network,
+                            '-e', f'ACG_TEST_HTTP_BASE=http://{app}',
                             '--entrypoint', 'php', *mounts, '-v', f'{root}/tests/upgrade:/review:ro', image,
                             '-d', 'error_reporting=22527', '/review/scenarios.php', action])
 
@@ -123,6 +124,8 @@ def main():
                 migration()
                 step('assert_multi')
                 step('smoke')
+                step('pay_limits')
+                step('security_hardening')
                 step('invalid_binding')
                 migration(expect=1)
                 step('assert_invalid_binding')
@@ -192,6 +195,9 @@ def main():
             step('assert_migration')
             print(image_php(args.image, 'trades').strip(), flush=True)
             print(image_php(args.image, 'security').strip(), flush=True)
+            print(image_php(args.image, 'pay_limits').strip(), flush=True)
+            print(image_php(args.image, 'security_hardening').strip(), flush=True)
+            print(image_php(args.image, 'security_web').strip(), flush=True)
             command(['docker', 'restart', app])
             for _ in range(60):
                 if subprocess.run(['docker', 'exec', app, 'php', '/usr/local/bin/acg-faka-healthcheck.php'], capture_output=True).returncode == 0:

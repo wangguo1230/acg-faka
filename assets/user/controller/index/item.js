@@ -234,9 +234,10 @@
         if (!limit || !(base > 0)) {
             return null;
         }
-        //百分比手续费服务端 bcmul 截断到分，先取 6 位小数消掉浮点误差再截断
-        const fee = limit.percent ? Math.trunc(Math.round(base * limit.cost * 1e6) / 1e4) / 100 : limit.cost;
-        const amount = Math.round((base + fee) * 100) / 100;
+        //固定费也支持三位小数；和服务端一样截断到分，不能四舍五入后误判边界。
+        const rawFee = limit.percent ? base * limit.cost : limit.cost;
+        const fee = Math.trunc(Math.round(rawFee * 1e6) / 1e4) / 100;
+        const amount = Math.trunc(Math.round((base + fee) * 1e6) / 1e4) / 100;
         if (limit.max > 0 && amount > limit.max) {
             return {over: true, amount};
         }

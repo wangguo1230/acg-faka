@@ -39,8 +39,13 @@ class Authentication extends Manage
     public function login(string $username, string $password): array
     {
         $ip = Client::getAddress();
-        //后台登录限流：挡住账号/密码/验证码爆破（本次入侵实测被刷 27 次）
-        if (Throttle::tooMany("adminlogin:{$ip}", 10, 600)) {
+        //账号预算独立于来源 IP；按数据库解析的 ID 合并大小写/重音等价的邮箱写法。
+        $account = \App\Model\Manage::query()->where('email', trim($username))->first(['id']);
+        $accountKey = $account
+            ? 'adminlogin:account:' . (int)$account->id
+            : 'adminlogin:unknown:' . hash('sha256', strtolower(trim($username)));
+        if (Throttle::tooMany("adminlogin:{$ip}", 10, 600)
+            || Throttle::tooMany($accountKey, 30, 600)) {
             $this->loginFail($username, "throttled");
             throw new JSONException("登录尝试过于频繁，请稍后再试");
         }
@@ -65,7 +70,6 @@ class Authentication extends Manage
             }
             throw $e;
         }
-        Throttle::clear("adminlogin:{$ip}"); //登录成功后清零
         return $this->json(200, "success", $result);
     }
 

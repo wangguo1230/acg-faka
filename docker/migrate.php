@@ -113,6 +113,11 @@ try {
         }
     };
 
+    // 后台 TOTP 依赖此列；旧站升级也必须补齐，不能只依赖全新安装 SQL。
+    $addColumn('manage', 'google_secret', static function ($t) {
+        $t->string('google_secret', 64)->nullable();
+    });
+
     // —— 列：3.5.4 → 3.7.6 增量 ——
     $addColumn('user_recharge', 'pay_cost', static function ($t) {
         $t->decimal('pay_cost', 10, 2)->unsigned()->nullable()->default(0);
@@ -182,6 +187,43 @@ try {
     // —— 列：3.8.3 增量（手动发货商品「付款即发货」）——
     $addColumn('commodity', 'delivery_auto', static function ($t) {
         $t->unsignedTinyInteger('delivery_auto')->default(0);
+    });
+
+    // —— 3.8.6 增量：支付限额 / 订单退款 / 货源与分站规则 ——
+    // 启动时补齐，避免首个支付请求承担 DDL，或服务层直接下单时把缺失限额当成不限。
+    foreach (['min_amount', 'max_amount'] as $column) {
+        $addColumn('pay', $column, static function ($t) use ($column) {
+            $t->decimal($column, 10, 2)->unsigned()->default(0);
+        });
+    }
+    $addColumn('order', 'refund_status', static function ($t) {
+        $t->unsignedTinyInteger('refund_status')->default(0);
+    });
+    $addColumn('order', 'refund_amount', static function ($t) {
+        $t->decimal('refund_amount', 10, 2)->unsigned()->default(0);
+    });
+    $addColumn('order', 'refund_time', static function ($t) {
+        $t->dateTime('refund_time')->nullable();
+    });
+    $addColumn('order', 'shared_error', static function ($t) {
+        $t->string('shared_error', 255)->charset('utf8mb4')->collation('utf8mb4_general_ci')->nullable();
+    });
+    $addColumn('commodity', 'shared_leave_message_sync', static function ($t) {
+        $t->unsignedTinyInteger('shared_leave_message_sync')->default(0);
+    });
+    $addColumn('shared', 'factory_base', static function ($t) {
+        $t->unsignedTinyInteger('factory_base')->default(0);
+    });
+    foreach (['business', 'user_category'] as $table) {
+        $addColumn($table, 'premium', static function ($t) {
+            $t->unsignedInteger('premium')->default(0);
+        });
+    }
+    $addColumn('business', 'premium_rounding', static function ($t) {
+        $t->unsignedTinyInteger('premium_rounding')->default(0);
+    });
+    $addColumn('user_category', 'rounding', static function ($t) {
+        $t->unsignedTinyInteger('rounding')->default(0);
     });
 
     // —— 3.8.4 新表：文件卡密归档 ——

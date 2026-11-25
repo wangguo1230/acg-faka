@@ -51,6 +51,9 @@ function addOrder(string $trade, ?float $gateway = null): int {
 
 if ($action === 'seed') {
     configFile(['pid' => 'old-merchant', 'key' => 'old-test-key', 'top' => 0]);
+    // The installer replaces this placeholder with a real password hash before
+    // any session can be issued. JWT 7 correctly rejects the raw SQL placeholder.
+    $db->table('manage')->where('id', 1)->update(['password' => App\Util\Str::hashPassword('Upgrade-admin-fixture-password!')]);
     $db->table('user')->insert(['id' => 1000, 'username' => 'upgrade-user', 'password' => str_repeat('a', 32),
         'salt' => 'test', 'app_key' => 'test', 'create_time' => date('Y-m-d H:i:s'), 'status' => 1]);
     $db->table('commodity')->where('id', 1)->update(['delivery_way' => 0, 'send_email' => 0]);
@@ -90,9 +93,13 @@ if ($action === 'seed') {
         check($schema->hasTable($table), "3.8.x table {$table} missing");
     }
     foreach (['commodity' => ['substation_disable', 'ban', 'ban_reason', 'delivery_auto'], 'user' => ['totp_secret', 'totp_recovery', 'fund_2fa'],
-                 'manage_session' => ['last_active_time']] as $table => $columns) {
-        check($schema->hasColumns($table, $columns), "3.8.1 columns on {$table} missing");
+                 'manage' => ['google_secret'], 'manage_session' => ['last_active_time'], 'pay' => ['min_amount', 'max_amount'],
+                 'order' => ['refund_status', 'refund_amount', 'refund_time', 'shared_error'],
+                 'business' => ['premium', 'premium_rounding'], 'user_category' => ['premium', 'rounding'],
+                 'shared' => ['factory_base']] as $table => $columns) {
+        check($schema->hasColumns($table, $columns), "3.8.x columns on {$table} missing");
     }
+    check($schema->hasColumn('commodity', 'shared_leave_message_sync'), '3.8.6 commodity column missing');
     check(App\Util\AdminLock::timeoutMinutes() === 15, 'Upgrade changed admin lock default');
     check((require BASE_PATH . '/app/Pay/Epay/Config/Config.php')['key'] === 'old-test-key', 'Legacy file overwritten');
 } elseif ($action === 'callbacks') {
@@ -204,6 +211,12 @@ if ($action === 'seed') {
     check($recharges->callback($route, payload($order['tradeNo'], (string)$gateway['amount'], $key)) === 'success', 'New recharge payment failed');
     check($recharges->callback($route, payload($order['tradeNo'], (string)$gateway['amount'], $key)) === 'success', 'New recharge duplicate failed');
     check((float)$db->table('user')->where('id', 1000)->value('balance') === $before + 10, 'New recharge credited fee or duplicated');
+} elseif ($action === 'pay_limits') {
+    require __DIR__ . '/pay_limits.php';
+} elseif ($action === 'security_hardening') {
+    require __DIR__ . '/security_hardening.php';
+} elseif ($action === 'security_web') {
+    require __DIR__ . '/security_web.php';
 } elseif ($action === 'security') {
     $db->table('config')->updateOrInsert(['key' => 'callback_domain'], ['value' => 'https://notify.invalid']);
     @unlink(BASE_PATH . '/runtime/config');

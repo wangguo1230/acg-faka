@@ -146,7 +146,7 @@ if (!function_exists("item_var")) {
 
 if (!function_exists("user_header_nav")) {
     /**
-     * 商城前台顶部导航数据源：内置项(购物/订单查询) + USER_VIEW_HEADER_NAV(0x88) 插件项。
+     * 商城前台顶部导航数据源：内置项(购物/订单查询/买币教程) + USER_VIEW_HEADER_NAV(0x88) 插件项。
      *
      * 条目契约（老版 PHP 主题直取 name/url/icon/target 四键，插件返回时必须齐全）：
      *   name   已翻译的显示名
@@ -156,7 +156,7 @@ if (!function_exists("user_header_nav")) {
      *   target _self|_blank
      *   match  active 高亮的路由前缀（可空串 = 不高亮；模板侧必须先判空再调 active()，
      *          否则 active('') 对任何路由都命中）
-     *   key    shop|query|''(插件项)，供个别主题按键裁剪（如 NewYork 不渲染 shop）
+     *   key    shop|query|tutorial|''(插件项)，供个别主题按键裁剪（如 NewYork 不渲染 shop）
      *
      * $overrides 用于主题微调内置项的文案/图标而不复制整个数组：
      *   user_header_nav(['shop' => ['name' => t('商城')], 'query' => ['icon' => '...']])
@@ -181,6 +181,14 @@ if (!function_exists("user_header_nav")) {
                 "micon" => "receipt_long",
                 "target" => "_self",
                 "match" => "/user/index/query",
+            ],
+            "tutorial" => [
+                "name" => lang("买币教程", "tpl"),
+                "url" => "/user/tutorial/binance",
+                "icon" => "fa-duotone fa-regular fa-book-open",
+                "micon" => "menu_book",
+                "target" => "_blank",
+                "match" => "/user/tutorial",
             ],
         ];
 

@@ -11,10 +11,15 @@
 
 namespace Symfony\Contracts\Translation;
 
+/**
+ * Gets and sets the current locale.
+ */
 interface LocaleAwareInterface
 {
     /**
      * Sets the current locale.
+     *
+     * @return void
      *
      * @throws \InvalidArgumentException If the locale contains invalid characters
      */

@@ -14,6 +14,7 @@ use App\Util\CallbackIpWhitelist;
 use App\Util\Captcha;
 use App\Util\Client;
 use App\Util\Date;
+use App\Util\OrderAccess;
 use App\Util\PayProfile;
 use App\Util\PayTest;
 use App\Util\Str;
@@ -214,15 +215,16 @@ class Order extends User
         if (Throttle::tooMany("state:ip:" . Client::getAddress(), 120, 600)) {
             throw new JSONException("请求过于频繁，请稍后再试");
         }
-        $order = \App\Model\Order::query()->where("trade_no", $tradeNo)->first(['id', 'trade_no', 'amount', 'status']);
-        if (!$order) {
-            $order = UserRecharge::query()->where("trade_no", $tradeNo)->first(['id', 'trade_no', 'amount', 'status']);
+        $buyer = $this->getUser();
+        $order = \App\Model\Order::query()->where("trade_no", $tradeNo)->first(['id', 'trade_no', 'amount', 'status', 'owner']);
+        if ($order) {
+            OrderAccess::assertCanRead($order, $buyer);
+        } else {
+            $order = UserRecharge::query()->where("trade_no", $tradeNo)->first(['id', 'trade_no', 'amount', 'status', 'user_id']);
+            if (!$order || !$buyer || (int)$order->user_id !== (int)$buyer->id) {
+                throw new JSONException("未查询到相关信息");
+            }
         }
-        if (!$order) {
-            //原代码对不存在订单会 $order->toArray() 空指针报错（曾刷满 runtime.log）
-            throw new JSONException("未查询到相关信息");
-        }
-        //回显订单信息
-        return $this->json(200, 'success', $order->toArray());
+        return $this->json(200, 'success', array_intersect_key($order->toArray(), array_flip(['id', 'trade_no', 'amount', 'status'])));
     }
 }
